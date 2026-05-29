@@ -1,0 +1,8 @@
+node_modules/
+.env
+uploads/
+server.*.log
+server-3001.err.log
+server-3001.out.log
+server.log
+server.err

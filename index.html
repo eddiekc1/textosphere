@@ -1,0 +1,115 @@
+﻿<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Textosphere</title>
+    <link rel="stylesheet" href="styles.css?v=20260529-login-id-or-email" />
+  </head>
+  <body>
+    <section class="auth-shell" id="authShell" hidden>
+      <div class="auth-card">
+        <div class="brand auth-brand">
+          <div class="brand-mark" aria-hidden="true"></div>
+          <div>
+            <p class="eyebrow">SNS Prototype</p>
+            <h1>Textosphere</h1>
+          </div>
+        </div>
+        <div class="auth-grid">
+          <section class="auth-panel">
+            <h2>ログイン</h2>
+            <label class="field"><span>メールアドレス / ユーザーID</span><input id="loginEmailInput" type="text" autocomplete="username" /></label>
+            <label class="field"><span>パスワード</span><input id="loginPasswordInput" type="password" autocomplete="off" value="" /></label>
+            <button class="primary-button" id="loginButton" type="button">ログイン</button>
+          </section>
+          <section class="auth-panel">
+            <h2>ユーザー作成</h2>
+            <label class="field"><span>メールアドレス</span><input id="signupEmailInput" type="email" autocomplete="email" /></label>
+            <label class="field"><span>ユーザー名</span><input id="signupUserNameInput" type="text" placeholder="表示名" /></label>
+            <label class="field"><span>ユーザーID</span><input id="signupUserIdInput" type="text" autocomplete="off" value="" placeholder="半角英数、_、-" /></label>
+            <label class="field"><span>パスワード</span><input id="signupPasswordInput" type="password" autocomplete="new-password" /></label>
+            <label class="field"><span>生年月日</span><input id="signupBirthDateInput" type="date" /></label>
+            <label class="field"><span>プロフィールアイコン</span><input id="signupProfileIconInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" /></label>
+            <label class="field"><span>自己紹介文</span><textarea id="signupBioInput" rows="4" placeholder="自己紹介文"></textarea></label>
+            <button class="secondary-button" id="signupButton" type="button">ユーザーを作成</button>
+          </section>
+        </div>
+        <p class="auth-message" id="authMessage"></p>
+      </div>
+    </section>
+    <div class="app-shell" id="appShell" hidden>
+      <aside class="sidebar" aria-label="投稿作成">
+        <header class="brand">
+          <div class="brand-mark" aria-hidden="true"></div>
+          <div>
+            <p class="eyebrow">Where texts connect beyond time.</p>
+            <h1>Textosphere</h1>
+          </div>
+        </header>
+        <section class="panel user-panel">
+          <button class="user-summary" id="userSummaryButton" type="button">
+            <span class="user-avatar" id="currentUserIcon">U</span>
+            <div>
+              <h2 id="currentUserId">User</h2>
+              <p class="user-bio" id="currentUserBio"></p>
+            </div>
+          </button>
+        </section>
+        <section class="panel node-list-panel">
+          <div class="panel-heading"><h2>光点一覧</h2><span id="nodeCount">0</span></div>
+          <div class="node-list" id="nodeList"></div>
+        </section>
+        <button class="panel-toggle" id="composerToggle" type="button" aria-expanded="false" aria-controls="composerPanel">新しい光点</button>
+        <section class="panel composer" id="composerPanel" hidden>
+          <div class="panel-heading"><h2>新しい光点</h2></div>
+          <label class="field"><span>クラスタ</span><select id="clusterInput"></select></label>
+          <label class="field"><span>タイプ</span><select id="typeInput"><option value="text">テキスト</option><option value="image">画像</option><option value="music">音楽</option><option value="video">映像</option></select></label>
+          <label class="field"><span>タイトル</span><input id="titleInput" type="text" placeholder="記憶の断片、曲名、映像名" /></label>
+          <label class="field field-text" id="textField"><span>本文</span><textarea id="bodyInput" rows="7" placeholder="本文を入力してください"></textarea></label>
+          <div class="field field-media is-hidden" id="mediaField"><span>ファイル</span><input id="mediaFileInput" type="file" accept="image/png,image/jpeg,image/gif,audio/mpeg,video/mp4,.png,.jpg,.jpeg,.gif,.mp3,.mp4" /><div class="media-drop-zone" id="mediaDropZone"><strong>ファイルをドロップ</strong><small id="mediaDropStatus">ここへファイルをドラッグ＆ドロップできます</small><button class="ghost-button" id="clearDroppedMediaButton" type="button" hidden>解除</button></div><div class="clipboard-image-panel is-hidden" id="clipboardImagePanel" tabindex="0"><div class="clipboard-image-copy"><strong>画像を貼り付け</strong><small id="clipboardImageStatus">ここをクリックして Ctrl+V で貼り付けできます</small></div><img id="clipboardImagePreview" alt="" hidden /><button class="ghost-button" id="clearClipboardImageButton" type="button" hidden>解除</button></div><div class="duration-field" id="durationField"><span>再生時間</span><div class="duration-grid"><input id="durationInput" type="number" min="10" max="900" value="180" /><span>秒</span></div></div></div>
+          <button class="primary-button" id="addButton" type="button">光点を追加</button>
+        </section>
+        <section class="panel cluster-list-panel">
+          <div class="panel-heading"><h2>クラスタ一覧</h2><span id="clusterCount">0</span></div>
+          <div class="cluster-list" id="clusterList"></div>
+        </section>
+        <button class="panel-toggle" id="clusterToggle" type="button" aria-expanded="false" aria-controls="clusterPanel">新しいクラスタ</button>
+        <section class="panel cluster-panel" id="clusterPanel" hidden>
+          <div class="panel-heading"><h2>新しいクラスタ</h2></div>
+          <label class="field"><span>クラスタ名</span><input id="clusterNameInput" type="text" placeholder="クラスタ名" /></label>
+          <label class="field"><span>説明</span><textarea id="clusterDescriptionInput" rows="4" placeholder="説明を入力してください"></textarea></label>
+          <button class="primary-button" id="addClusterButton" type="button">クラスタを追加</button>
+        </section>
+      </aside>
+      <main class="universe" aria-label="情報の星図">
+        <canvas id="threadCanvas" aria-hidden="true"></canvas>
+        <div class="map-toolbar">
+          <button class="icon-button" id="shuffleButton" type="button" title="配置を揺らす" aria-label="配置を揺らす"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /></svg></button>
+          <button class="icon-button" id="clearLinksButton" type="button" title="線を消す" aria-label="線を消す"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M7 7l-2 2a4 4 0 0 0 0 6l1 1a4 4 0 0 0 6 0l2-2M10 6l2-2a4 4 0 0 1 6 0l1 1a4 4 0 0 1 0 6l-2 2" /></svg></button>
+        </div>
+        <div class="nodes-layer" id="nodesLayer"></div>
+        <div class="link-comment-tooltip" id="linkCommentTooltip" aria-hidden="true"></div>
+      </main>
+      <aside class="search-sidebar" id="searchSidebar" aria-label="光点検索">
+        <button class="search-sidebar-toggle" id="searchSidebarToggle" type="button" aria-label="光点検索を隠す" title="光点検索を隠す">>></button>
+        <section class="panel search-panel">
+          <div class="panel-heading"><h2>光点検索</h2><span id="searchResultCount">0</span></div>
+          <label class="field"><span>種別</span><select id="searchTypeInput"><option value="all">すべて</option><option value="text">テキスト</option><option value="image">画像</option><option value="music">音楽</option><option value="video">映像</option></select></label>
+          <label class="field"><span>ワード</span><input id="searchWordInput" type="search" placeholder="タイトル・本文から検索" /></label>
+          <div class="search-sort-grid">
+            <label class="field"><span>並べ替え</span><select id="searchSortInput"><option value="createdAt">登録日時</option><option value="likeCount">Like数</option><option value="connectionCount">接続ノード数</option></select></label>
+            <label class="field"><span>順序</span><select id="searchOrderInput"><option value="desc">降順</option><option value="asc">昇順</option></select></label>
+          </div>
+          <div class="search-results" id="searchResults"></div>
+        </section>
+      </aside>
+    </div>
+    <dialog class="detail-dialog" id="detailDialog"><div class="dialog-shell"><button class="close-button" id="closeDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="detailType"></div><h2 id="detailTitle"></h2><div class="detail-content" id="detailContent"></div></div></dialog>
+    <dialog class="connection-dialog" id="connectionDialog"><div class="connection-shell"><button class="close-button" id="closeConnectionDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type">接続</div><h2 id="connectionTitle">光点を接続</h2><p class="connection-summary" id="connectionSummary"></p><label class="field"><span>コメント</span><textarea id="connectionCommentInput" rows="4" maxlength="200" placeholder="接続にコメントを付ける"></textarea></label><div class="connection-actions"><button class="secondary-button" id="cancelConnectionButton" type="button">キャンセル</button><button class="primary-button" id="confirmConnectionButton" type="button">線で繋ぐ</button></div></div></dialog>
+    <dialog class="profile-dialog" id="profileDialog"><div class="profile-shell"><button class="close-button" id="closeProfileDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type">ユーザー</div><button class="secondary-button profile-logout-button" id="logoutButton" type="button">ログアウト</button><h2>プロフィール編集</h2><label class="field"><span>ユーザー名</span><input id="profileUserNameInput" type="text" placeholder="表示名" /></label><label class="field"><span>ユーザーID</span><input id="profileUserIdInput" type="text" autocomplete="off" /></label><label class="field"><span>パスワード</span><input id="profilePasswordInput" type="password" autocomplete="new-password" placeholder="変更する場合のみ入力" /></label><label class="field"><span>生年月日</span><input id="profileBirthDateInput" type="date" /></label><label class="field"><span>プロフィールアイコン</span><input id="profileIconInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" /></label><label class="field"><span>自己紹介文</span><textarea id="profileBioInput" rows="5" placeholder="自己紹介文"></textarea></label><p class="profile-message" id="profileMessage"></p><div class="profile-actions"><button class="secondary-button" id="cancelProfileButton" type="button">キャンセル</button><button class="primary-button" id="saveProfileButton" type="button">保存</button></div></div></dialog>
+    <dialog class="user-detail-dialog" id="userDetailDialog"><div class="user-detail-shell"><button class="close-button" id="closeUserDetailDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="user-detail-content" id="userDetailContent"></div></div></dialog>
+    <dialog class="cluster-nodes-dialog" id="clusterNodesDialog"><div class="cluster-nodes-shell"><button class="close-button" id="closeClusterNodesDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type">クラスタ</div><h2 id="clusterNodesTitle"></h2><p class="cluster-nodes-meta" id="clusterNodesMeta"></p><div class="cluster-nodes-content" id="clusterNodesContent"></div></div></dialog>
+    <script src="app.js?v=20260529-login-id-or-email"></script>
+  </body>
+</html>
