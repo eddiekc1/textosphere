@@ -35,6 +35,31 @@ fs.mkdirSync(uploadDir, { recursive: true });
 
 const maxUploadBytes = 100 * 1024 * 1024;
 
+app.disable("x-powered-by");
+
+const securityPolicy = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: http: https:",
+  "media-src 'self' blob: http: https:",
+  "connect-src 'self'",
+  "frame-src https://www.youtube.com https://www.youtube-nocookie.com",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+].join("; ");
+
+function setSecurityHeaders(req, res, next) {
+  res.setHeader("Content-Security-Policy", securityPolicy);
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  next();
+}
+
 const seedNodes = [
   {
     id: crypto.randomUUID(),
@@ -192,6 +217,10 @@ function canManageOwnedResource(user, ownerUserId) {
   return Number(user.role) <= 2 || ownerUserId === user.id;
 }
 
+function canDeleteLinkResource(user, ownerUserId) {
+  return Number(user.role) === 1 || ownerUserId === user.id;
+}
+
 function parseContentDisposition(value) {
   const result = {};
   if (!value) return result;
@@ -325,6 +354,21 @@ function storeProfileIconFile(file) {
   };
 }
 
+function normalizeProfileIconUrl(value) {
+  const rawUrl = String(value || "").trim();
+  if (!rawUrl || /[\u0000-\u001f\u007f]/.test(rawUrl)) return "";
+  if (rawUrl.startsWith("/uploads/") && !rawUrl.includes("\\") && !rawUrl.split("/").includes("..")) {
+    return rawUrl;
+  }
+
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : "";
+  } catch (error) {
+    return "";
+  }
+}
+
 function toNode(row) {
   return {
     id: row.id,
@@ -339,6 +383,7 @@ function toNode(row) {
     mediaName: row.media_name,
     likeCount: Number(row.like_count || 0),
     likedByCurrentUser: Boolean(row.liked_by_current_user),
+    favoritedByCurrentUser: Boolean(row.favorited_by_current_user),
     createdAt: row.created_at,
     selection: {
       start: row.selection_start,
@@ -446,6 +491,7 @@ async function getNodeForResponse(nodeId, userId = null) {
       select nodes.*,
              coalesce(node_like_counts.like_count, 0)::int as like_count,
              ($2::uuid is not null and current_user_likes.user_id is not null) as liked_by_current_user,
+             ($2::uuid is not null and current_user_favorites.user_id is not null) as favorited_by_current_user,
              coalesce(array_agg(node_mega_clusters.mega_cluster_id order by node_mega_clusters.score desc, node_mega_clusters.mega_cluster_id)
                filter (where node_mega_clusters.mega_cluster_id is not null), '{}') as mega_cluster_ids
       from nodes
@@ -457,9 +503,12 @@ async function getNodeForResponse(nodeId, userId = null) {
       left join node_likes current_user_likes
         on current_user_likes.node_id = nodes.id
        and current_user_likes.user_id = $2
+      left join node_favorites current_user_favorites
+        on current_user_favorites.node_id = nodes.id
+       and current_user_favorites.user_id = $2
       left join node_mega_clusters on node_mega_clusters.node_id = nodes.id
       where nodes.id = $1
-      group by nodes.id, node_like_counts.like_count, current_user_likes.user_id
+      group by nodes.id, node_like_counts.like_count, current_user_likes.user_id, current_user_favorites.user_id
     `,
     [nodeId, userId],
   );
@@ -484,9 +533,18 @@ function toLink(row) {
   return {
     id: row.id,
     ownerUserId: row.owner_user_id,
+    ownerUser: row.owner_user_identifier || row.owner_display_name || row.owner_profile_icon
+      ? {
+          id: row.owner_user_id,
+          userId: row.owner_user_identifier || "unknown",
+          userName: row.owner_display_name || row.owner_user_identifier || "unknown",
+          profileIcon: row.owner_profile_icon || "",
+        }
+      : null,
     source: row.source_node_id,
     target: row.target_node_id,
     comment: row.comment || "",
+    createdAt: row.created_at,
   };
 }
 
@@ -665,6 +723,23 @@ async function initDb() {
     )
   `);
   await pool.query(`
+    create table if not exists node_favorites (
+      user_id uuid not null references users(id) on delete cascade,
+      node_id uuid not null references nodes(id) on delete cascade,
+      created_at timestamptz not null default now(),
+      primary key (user_id, node_id)
+    )
+  `);
+  await pool.query(`
+    create table if not exists user_blocks (
+      blocker_user_id uuid not null references users(id) on delete cascade,
+      blocked_user_id uuid not null references users(id) on delete cascade,
+      created_at timestamptz not null default now(),
+      primary key (blocker_user_id, blocked_user_id),
+      check (blocker_user_id <> blocked_user_id)
+    )
+  `);
+  await pool.query(`
     do $$
     declare
       constraint_name text;
@@ -756,6 +831,7 @@ async function initDb() {
   }
 }
 
+app.use(setSecurityHeaders);
 app.use(express.json());
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -817,7 +893,7 @@ app.post("/api/auth/register", parseMultipartForm, async (req, res, next) => {
     const userName = String(req.body.userName || "").trim();
     const userId = String(req.body.userId || "").trim();
     const birthDate = req.body.birthDate || null;
-    let profileIcon = String(req.body.profileIcon || "").trim();
+    let profileIcon = normalizeProfileIconUrl(req.body.profileIcon);
     const bio = String(req.body.bio || "").trim();
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -978,6 +1054,7 @@ app.get("/api/state", requireAuth, async (req, res, next) => {
           select nodes.*,
                  coalesce(node_like_counts.like_count, 0)::int as like_count,
                  (current_user_likes.user_id is not null) as liked_by_current_user,
+                 (current_user_favorites.user_id is not null) as favorited_by_current_user,
                  coalesce(array_agg(node_mega_clusters.mega_cluster_id order by node_mega_clusters.score desc, node_mega_clusters.mega_cluster_id)
                    filter (where node_mega_clusters.mega_cluster_id is not null), '{}') as mega_cluster_ids
           from nodes
@@ -989,13 +1066,24 @@ app.get("/api/state", requireAuth, async (req, res, next) => {
           left join node_likes current_user_likes
             on current_user_likes.node_id = nodes.id
            and current_user_likes.user_id = $1
+          left join node_favorites current_user_favorites
+            on current_user_favorites.node_id = nodes.id
+           and current_user_favorites.user_id = $1
           left join node_mega_clusters on node_mega_clusters.node_id = nodes.id
-          group by nodes.id, node_like_counts.like_count, current_user_likes.user_id
+          group by nodes.id, node_like_counts.like_count, current_user_likes.user_id, current_user_favorites.user_id
           order by nodes.created_at asc
         `,
         [req.user.id],
       ),
-      pool.query("select * from links order by created_at asc"),
+      pool.query(`
+        select links.*,
+               users.user_identifier as owner_user_identifier,
+               users.display_name as owner_display_name,
+               users.profile_icon as owner_profile_icon
+        from links
+        left join users on users.id = links.owner_user_id
+        order by links.created_at asc
+      `),
       pool.query(`
         select clusters.*,
                users.user_identifier as owner_user_identifier,
@@ -1068,9 +1156,22 @@ async function getNodeLikeState(nodeId, userId) {
   };
 }
 
+async function getNodeFavoriteState(nodeId, userId) {
+  const { rows } = await pool.query(
+    `
+      select exists(select 1 from node_favorites where node_id = $1 and user_id = $2) as favorited_by_current_user
+    `,
+    [nodeId, userId],
+  );
+  return {
+    nodeId,
+    favoritedByCurrentUser: Boolean(rows[0]?.favorited_by_current_user),
+  };
+}
+
 app.get("/api/users/:id", requireAuth, async (req, res, next) => {
   try {
-    const [userResult, clusterResult, nodeResult, followResult] = await Promise.all([
+    const [userResult, clusterResult, nodeResult, followResult, blockResult] = await Promise.all([
       pool.query("select id, user_identifier, display_name, profile_icon, bio from users where id = $1", [req.params.id]),
       pool.query("select * from clusters where owner_user_id = $1 order by created_at desc", [req.params.id]),
       pool.query(
@@ -1078,6 +1179,7 @@ app.get("/api/users/:id", requireAuth, async (req, res, next) => {
           select nodes.*,
                  coalesce(node_like_counts.like_count, 0)::int as like_count,
                  (current_user_likes.user_id is not null) as liked_by_current_user,
+                 (current_user_favorites.user_id is not null) as favorited_by_current_user,
                  coalesce(array_agg(node_mega_clusters.mega_cluster_id order by node_mega_clusters.score desc, node_mega_clusters.mega_cluster_id)
                    filter (where node_mega_clusters.mega_cluster_id is not null), '{}') as mega_cluster_ids
           from nodes
@@ -1089,9 +1191,12 @@ app.get("/api/users/:id", requireAuth, async (req, res, next) => {
           left join node_likes current_user_likes
             on current_user_likes.node_id = nodes.id
            and current_user_likes.user_id = $2
+          left join node_favorites current_user_favorites
+            on current_user_favorites.node_id = nodes.id
+           and current_user_favorites.user_id = $2
           left join node_mega_clusters on node_mega_clusters.node_id = nodes.id
           where nodes.owner_user_id = $1
-          group by nodes.id, node_like_counts.like_count, current_user_likes.user_id
+          group by nodes.id, node_like_counts.like_count, current_user_likes.user_id, current_user_favorites.user_id
           order by nodes.created_at desc
         `,
         [req.params.id, req.user.id],
@@ -1106,6 +1211,10 @@ app.get("/api/users/:id", requireAuth, async (req, res, next) => {
         `,
         [req.user.id, req.params.id],
       ),
+      pool.query(
+        "select 1 from user_blocks where blocker_user_id = $1 and blocked_user_id = $2 limit 1",
+        [req.user.id, req.params.id],
+      ),
     ]);
 
     if (userResult.rows.length === 0) {
@@ -1118,7 +1227,65 @@ app.get("/api/users/:id", requireAuth, async (req, res, next) => {
       clusters: clusterResult.rows.map(toCluster),
       nodes: nodeResult.rows.map(toNode),
       followedClusterIds: followResult.rows.map((row) => row.cluster_id),
+      blockedByCurrentUser: blockResult.rows.length > 0,
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/users/:id/block", requireAuth, async (req, res, next) => {
+  const targetUserId = req.params.id;
+  if (targetUserId === req.user.id) {
+    res.status(400).json({ error: "Cannot block yourself" });
+    return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const target = await client.query("select id from users where id = $1", [targetUserId]);
+    if (target.rows.length === 0) {
+      await client.query("rollback");
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    await client.query(
+      `
+        insert into user_blocks (blocker_user_id, blocked_user_id)
+        values ($1, $2)
+        on conflict (blocker_user_id, blocked_user_id) do nothing
+      `,
+      [req.user.id, targetUserId],
+    );
+    await client.query(
+      `
+        delete from links
+        where owner_user_id = $2
+          and exists (
+            select 1
+            from nodes
+            where nodes.owner_user_id = $1
+              and (nodes.id = links.source_node_id or nodes.id = links.target_node_id)
+          )
+      `,
+      [req.user.id, targetUserId],
+    );
+    await client.query("commit");
+    res.status(204).end();
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.delete("/api/users/:id/block", requireAuth, async (req, res, next) => {
+  try {
+    await pool.query("delete from user_blocks where blocker_user_id = $1 and blocked_user_id = $2", [req.user.id, req.params.id]);
+    res.status(204).end();
   } catch (error) {
     next(error);
   }
@@ -1182,6 +1349,47 @@ app.delete("/api/nodes/:id/like", requireAuth, async (req, res, next) => {
 
     await pool.query("delete from node_likes where user_id = $1 and node_id = $2", [req.user.id, req.params.id]);
     res.json(await getNodeLikeState(req.params.id, req.user.id));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/nodes/:id/favorite", requireAuth, async (req, res, next) => {
+  try {
+    const existing = await pool.query("select id, owner_user_id from nodes where id = $1", [req.params.id]);
+    if (existing.rows.length === 0) {
+      res.status(404).json({ error: "Node not found" });
+      return;
+    }
+    if (existing.rows[0].owner_user_id === req.user.id) {
+      res.status(400).json({ error: "Cannot favorite your own node" });
+      return;
+    }
+
+    await pool.query(
+      `
+        insert into node_favorites (user_id, node_id)
+        values ($1, $2)
+        on conflict (user_id, node_id) do nothing
+      `,
+      [req.user.id, req.params.id],
+    );
+    res.json(await getNodeFavoriteState(req.params.id, req.user.id));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/nodes/:id/favorite", requireAuth, async (req, res, next) => {
+  try {
+    const existing = await pool.query("select id from nodes where id = $1", [req.params.id]);
+    if (existing.rows.length === 0) {
+      res.status(404).json({ error: "Node not found" });
+      return;
+    }
+
+    await pool.query("delete from node_favorites where user_id = $1 and node_id = $2", [req.user.id, req.params.id]);
+    res.json(await getNodeFavoriteState(req.params.id, req.user.id));
   } catch (error) {
     next(error);
   }
@@ -1390,6 +1598,22 @@ app.post("/api/links", requireAuth, async (req, res, next) => {
       return;
     }
 
+    const blocked = await pool.query(
+      `
+        select 1
+        from nodes
+        join user_blocks on user_blocks.blocker_user_id = nodes.owner_user_id
+        where nodes.id in ($1, $2)
+          and user_blocks.blocked_user_id = $3
+        limit 1
+      `,
+      [source, target, req.user.id],
+    );
+    if (blocked.rows.length > 0) {
+      res.status(403).json({ error: "Blocked from linking to this user's nodes" });
+      return;
+    }
+
     const { rows } = await pool.query(
       `
         insert into links (id, owner_user_id, source_node_id, target_node_id, comment)
@@ -1434,6 +1658,40 @@ app.post("/api/links", requireAuth, async (req, res, next) => {
     }
 
     res.status(201).json(toLink(rows[0]));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/links/:source/:target", requireAuth, async (req, res, next) => {
+  try {
+    const { source, target } = req.params;
+    if (!source || !target || source === target) {
+      res.status(400).json({ error: "Invalid link" });
+      return;
+    }
+
+    const existing = await pool.query(
+      `
+        select id, owner_user_id
+        from links
+        where (source_node_id = $1 and target_node_id = $2)
+           or (source_node_id = $2 and target_node_id = $1)
+        limit 1
+      `,
+      [source, target],
+    );
+    if (existing.rows.length === 0) {
+      res.status(404).json({ error: "Link not found" });
+      return;
+    }
+    if (!canDeleteLinkResource(req.user, existing.rows[0].owner_user_id)) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
+    await pool.query("delete from links where id = $1", [existing.rows[0].id]);
+    res.sendStatus(204);
   } catch (error) {
     next(error);
   }

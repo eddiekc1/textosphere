@@ -17,7 +17,6 @@ const currentUserIcon = document.querySelector("#currentUserIcon");
 const currentUserId = document.querySelector("#currentUserId");
 const currentUserBio = document.querySelector("#currentUserBio");
 const userSummaryButton = document.querySelector("#userSummaryButton");
-const logoutButton = document.querySelector("#logoutButton");
 const linkCommentTooltip = document.querySelector("#linkCommentTooltip");
 const canvas = document.querySelector("#threadCanvas");
 const ctx = canvas.getContext("2d");
@@ -47,6 +46,10 @@ const shuffleButton = document.querySelector("#shuffleButton");
 const clearLinksButton = document.querySelector("#clearLinksButton");
 const nodeCount = document.querySelector("#nodeCount");
 const nodeList = document.querySelector("#nodeList");
+const nodeListTabs = document.querySelectorAll(".node-list-tab");
+const ownNodeCount = document.querySelector("#ownNodeCount");
+const followedNodeCount = document.querySelector("#followedNodeCount");
+const favoriteNodeCount = document.querySelector("#favoriteNodeCount");
 const searchTypeInput = document.querySelector("#searchTypeInput");
 const searchWordInput = document.querySelector("#searchWordInput");
 const searchSortInput = document.querySelector("#searchSortInput");
@@ -57,6 +60,9 @@ const searchSidebar = document.querySelector("#searchSidebar");
 const searchSidebarToggle = document.querySelector("#searchSidebarToggle");
 const clusterCount = document.querySelector("#clusterCount");
 const clusterList = document.querySelector("#clusterList");
+const clusterListTabs = document.querySelectorAll(".cluster-list-tab");
+const ownClusterCount = document.querySelector("#ownClusterCount");
+const followedClusterCount = document.querySelector("#followedClusterCount");
 const composerToggle = document.querySelector("#composerToggle");
 const composerPanel = document.querySelector("#composerPanel");
 const detailDialog = document.querySelector("#detailDialog");
@@ -66,10 +72,12 @@ const detailTitle = document.querySelector("#detailTitle");
 const detailContent = document.querySelector("#detailContent");
 const connectionDialog = document.querySelector("#connectionDialog");
 const closeConnectionDialogButton = document.querySelector("#closeConnectionDialogButton");
+const connectionType = document.querySelector("#connectionType");
 const connectionTitle = document.querySelector("#connectionTitle");
 const connectionSummary = document.querySelector("#connectionSummary");
 const connectionCommentInput = document.querySelector("#connectionCommentInput");
 const cancelConnectionButton = document.querySelector("#cancelConnectionButton");
+const disconnectConnectionButton = document.querySelector("#disconnectConnectionButton");
 const confirmConnectionButton = document.querySelector("#confirmConnectionButton");
 const profileDialog = document.querySelector("#profileDialog");
 const closeProfileDialogButton = document.querySelector("#closeProfileDialogButton");
@@ -87,6 +95,7 @@ const closeUserDetailDialogButton = document.querySelector("#closeUserDetailDial
 const userDetailContent = document.querySelector("#userDetailContent");
 const clusterNodesDialog = document.querySelector("#clusterNodesDialog");
 const closeClusterNodesDialogButton = document.querySelector("#closeClusterNodesDialogButton");
+const clusterNodesType = document.querySelector("#clusterNodesType");
 const clusterNodesTitle = document.querySelector("#clusterNodesTitle");
 const clusterNodesMeta = document.querySelector("#clusterNodesMeta");
 const clusterNodesContent = document.querySelector("#clusterNodesContent");
@@ -127,6 +136,25 @@ const NODE_DRAG_MAX_Y = 320;
 const CONNECTION_DROP_BASE_THRESHOLD = 96;
 const CONNECTION_DROP_MIN_THRESHOLD = 36;
 
+function createClientId() {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+
+  if (typeof globalThis.crypto?.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    globalThis.crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"));
+    return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex
+      .slice(8, 10)
+      .join("")}-${hex.slice(10, 16).join("")}`;
+  }
+
+  return `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 let apiAvailable = false;
 let selectedNodeId = null;
 let activeDetailNodeId = null;
@@ -134,9 +162,14 @@ let activeSelectionSyncCleanup = null;
 let activeNodeDrag = null;
 let activeUniversePan = null;
 let pendingConnection = null;
+let pendingConnectionDelete = null;
 let suppressNodeClick = false;
 let nodeListVisibleCount = NODE_LIST_PAGE_SIZE;
 let searchResultVisibleCount = SEARCH_RESULT_PAGE_SIZE;
+let activeNodeListMode = ["followed", "favorites"].includes(localStorage.getItem("textosphereNodeListMode"))
+  ? localStorage.getItem("textosphereNodeListMode")
+  : "own";
+let activeClusterListMode = localStorage.getItem("textosphereClusterListMode") === "followed" ? "followed" : "own";
 let universePan = { x: 0, y: 0 };
 let universeZoom = 1;
 let viewportPositionedNodeIds = new Set();
@@ -156,7 +189,7 @@ let clusterDirectory = [...clusters];
 let followedClusterIds = new Set();
 let nodes = [
   {
-    id: crypto.randomUUID(),
+    id: createClientId(),
     type: "text",
     title: "Yoake mae no memo",
     body: "Machi no hikari ga kiekiranai uchini, dareka no kotoba ga betsu no kyoku no rhythm to kasanatte, mada namae no nai kaiwa ga hajimaru.",
@@ -166,7 +199,7 @@ let nodes = [
     y: 32,
   },
   {
-    id: crypto.randomUUID(),
+    id: createClientId(),
     type: "music",
     title: "Pulse in Blue",
     body: "",
@@ -176,7 +209,7 @@ let nodes = [
     y: 43,
   },
   {
-    id: crypto.randomUUID(),
+    id: createClientId(),
     type: "video",
     title: "Madobe no 8 seconds",
     body: "",
@@ -433,6 +466,39 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function getSafeResourceUrl(value, options = {}) {
+  const {
+    allowRelative = true,
+    allowBlob = true,
+    allowDataImage = false,
+    allowHttp = true,
+    uploadsOnly = false,
+  } = options;
+  const rawUrl = String(value || "").trim();
+  if (!rawUrl || /[\u0000-\u001f\u007f]/.test(rawUrl)) return "";
+
+  if (rawUrl.startsWith("/")) {
+    if (!allowRelative || (uploadsOnly && !rawUrl.startsWith("/uploads/"))) return "";
+    if (rawUrl.includes("\\") || rawUrl.split("/").includes("..")) return "";
+    return window.location.protocol === "file:" ? `http://localhost:3000${rawUrl}` : rawUrl;
+  }
+
+  if (rawUrl.startsWith("blob:")) {
+    return allowBlob ? rawUrl : "";
+  }
+
+  if (rawUrl.startsWith("data:")) {
+    return allowDataImage && /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(rawUrl) ? rawUrl : "";
+  }
+
+  try {
+    const url = new URL(rawUrl);
+    return allowHttp && (url.protocol === "https:" || url.protocol === "http:") ? url.href : "";
+  } catch (error) {
+    return "";
+  }
+}
+
 function linkifyText(value) {
   const text = String(value || "");
   const urlPattern = /https?:\/\/[^\s<>"']+/g;
@@ -445,9 +511,11 @@ function linkifyText(value) {
     const trailing = rawUrl.match(/[.,!?;:、。)]*$/)?.[0] || "";
     const url = rawUrl.slice(0, rawUrl.length - trailing.length);
     if (!url) continue;
+    const href = getSafeResourceUrl(url, { allowRelative: false, allowBlob: false });
+    if (!href) continue;
 
     result += escapeHtml(text.slice(lastIndex, start));
-    result += `<a class="detail-text-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`;
+    result += `<a class="detail-text-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`;
     result += escapeHtml(trailing);
     lastIndex = start + rawUrl.length;
   }
@@ -459,7 +527,7 @@ function linkifyText(value) {
 function getTextUrls(value) {
   return Array.from(String(value || "").matchAll(/https?:\/\/[^\s<>"']+/g), (match) =>
     match[0].replace(/[.,!?;:、。)]*$/u, ""),
-  ).filter(Boolean);
+  ).filter((url) => getSafeResourceUrl(url, { allowRelative: false, allowBlob: false }));
 }
 
 function getYouTubeVideoId(rawUrl) {
@@ -546,12 +614,7 @@ function formatDateTime(value) {
 }
 
 function resolveMediaUrl(url) {
-  if (!url) return "";
-  if (/^(blob:|data:|https?:)/.test(url)) return url;
-  if (url.startsWith("/") && window.location.protocol === "file:") {
-    return `http://localhost:3000${url}`;
-  }
-  return url;
+  return getSafeResourceUrl(url, { allowDataImage: true });
 }
 
 async function apiRequest(path, options = {}) {
@@ -569,7 +632,9 @@ async function apiRequest(path, options = {}) {
     if (response.status === 401) {
       clearAuth();
     }
-    throw new Error(`API ${response.status}`);
+    const error = new Error(`API ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
 
   if (response.status === 204) return null;
@@ -594,9 +659,10 @@ function setAuthenticatedView(user) {
   currentUserId.textContent = getUserName(user);
   currentUserBio.textContent = user.bio || "自己紹介文は未設定です";
   currentUserIcon.replaceChildren();
-  if (/^(\/|blob:|data:image\/|https?:)/.test(user.profileIcon || "")) {
+  const profileIconUrl = resolveMediaUrl(user.profileIcon);
+  if (profileIconUrl) {
     const image = document.createElement("img");
-    image.src = resolveMediaUrl(user.profileIcon);
+    image.src = profileIconUrl;
     image.alt = "";
     image.addEventListener("error", () => {
       currentUserIcon.textContent = getUserName(user).slice(0, 1).toUpperCase();
@@ -624,12 +690,27 @@ function clearAuth() {
   if (profileDialog.open) {
     closeProfileDialog();
   }
+  if (userDetailDialog.open) {
+    closeUserDetailDialog();
+  }
   showAuth();
 }
 
 function canManageOwner(ownerUserId) {
   if (!currentUser) return false;
   return Number(currentUser.role) <= 2 || ownerUserId === currentUser.id;
+}
+
+function canDeleteLink(ownerUserId) {
+  if (!currentUser) return false;
+  return Number(currentUser.role) === 1 || ownerUserId === currentUser.id;
+}
+
+function updateConnectionActionsLayout() {
+  const visibleButtons = [cancelConnectionButton, disconnectConnectionButton, confirmConnectionButton].filter(
+    (button) => !button.hidden,
+  ).length;
+  confirmConnectionButton.parentElement.style.gridTemplateColumns = `repeat(${Math.max(visibleButtons, 1)}, minmax(0, 1fr))`;
 }
 
 async function handleAuthResponse(response) {
@@ -745,6 +826,7 @@ function normalizeNode(node) {
     megaClusterIds: Array.isArray(node.megaClusterIds) ? node.megaClusterIds.map((id) => Number(id)) : [],
     likeCount: Number(node.likeCount || 0),
     likedByCurrentUser: Boolean(node.likedByCurrentUser),
+    favoritedByCurrentUser: Boolean(node.favoritedByCurrentUser),
     createdAt: node.createdAt || new Date().toISOString(),
     selection: {
       start: selectionStart,
@@ -757,12 +839,23 @@ function normalizeNode(node) {
 
 function normalizeCluster(cluster) {
   return {
-    id: cluster.id || crypto.randomUUID(),
+    id: cluster.id || createClientId(),
     ownerUserId: cluster.ownerUserId || null,
     ownerUser: cluster.ownerUser || null,
     name: String(cluster.name || "").trim() || "Untitled cluster",
     description: cluster.description || "",
     createdAt: cluster.createdAt || new Date().toISOString(),
+  };
+}
+
+function normalizeLink(link) {
+  return {
+    source: link.source,
+    target: link.target,
+    ownerUserId: link.ownerUserId || null,
+    ownerUser: link.ownerUser || null,
+    comment: link.comment || "",
+    createdAt: link.createdAt || new Date().toISOString(),
   };
 }
 
@@ -807,7 +900,7 @@ async function loadState() {
     clusterDirectory = ensurePublicCluster(state.clusterDirectory || state.clusters || []);
     followedClusterIds = new Set(state.followedClusterIds || []);
     nodes = state.nodes.map(normalizeNode);
-    links = state.links.map((link) => ({ source: link.source, target: link.target, ownerUserId: link.ownerUserId, comment: link.comment || "" }));
+    links = state.links.map(normalizeLink);
     hiddenLinks = null;
     apiAvailable = true;
   } catch (error) {
@@ -1165,7 +1258,9 @@ function drawLinks() {
         source: link.source,
         target: link.target,
         ownerUserId: link.ownerUserId,
+        ownerUser: link.ownerUser || null,
         comment: fullComment,
+        createdAt: link.createdAt,
         isTruncated: Array.from(fullComment).length > Array.from(comment).length,
       });
     }
@@ -1231,7 +1326,7 @@ function getNodeGlowClass(id) {
 
 function isNodeInVisibleScope(node) {
   if (!currentUser) return true;
-  return node.ownerUserId === currentUser.id || followedClusterIds.has(node.clusterId);
+  return node.ownerUserId === currentUser.id || followedClusterIds.has(node.clusterId) || node.favoritedByCurrentUser;
 }
 
 function getVisibleScopeNodes() {
@@ -1241,6 +1336,7 @@ function getVisibleScopeNodes() {
 function refreshScopeViews() {
   renderNodeList();
   renderSearchResults();
+  renderClusterList();
   renderStats();
   renderNodes();
   drawLinks();
@@ -1469,10 +1565,17 @@ function openConnectionDialog(sourceNode, targetNode) {
     source: sourceNode.id,
     target: targetNode.id,
   };
+  pendingConnectionDelete = null;
+  connectionType.textContent = "接続";
   connectionTitle.textContent = "光点を接続";
   connectionSummary.textContent = `${sourceNode.title} から ${targetNode.title} へ接続します`;
   connectionCommentInput.value = "";
+  connectionCommentInput.readOnly = false;
   confirmConnectionButton.textContent = "線で繋ぐ";
+  confirmConnectionButton.hidden = false;
+  disconnectConnectionButton.hidden = true;
+  updateConnectionActionsLayout();
+  cancelConnectionButton.textContent = "キャンセル";
   if (!connectionDialog.open) {
     connectionDialog.showModal();
   }
@@ -1480,28 +1583,63 @@ function openConnectionDialog(sourceNode, targetNode) {
 }
 
 function openConnectionCommentEditor(hitbox) {
-  if (!canManageOwner(hitbox.ownerUserId)) return;
   const sourceNode = nodes.find((node) => node.id === hitbox.source);
   const targetNode = nodes.find((node) => node.id === hitbox.target);
   if (!sourceNode || !targetNode) return;
 
-  pendingConnection = {
-    source: sourceNode.id,
-    target: targetNode.id,
-  };
-  connectionTitle.textContent = "接続コメントを編集";
+  const canEdit = canManageOwner(hitbox.ownerUserId);
+  const canDelete = canDeleteLink(hitbox.ownerUserId);
+  const ownerUser =
+    hitbox.ownerUser ||
+    (currentUser && hitbox.ownerUserId === currentUser.id
+      ? { id: currentUser.id, userId: currentUser.userId, userName: currentUser.userName, profileIcon: currentUser.profileIcon }
+      : null);
+  const createdAtMarkup = renderCreatedAtMeta(hitbox.createdAt);
+  pendingConnection = canEdit
+    ? {
+        source: sourceNode.id,
+        target: targetNode.id,
+      }
+    : null;
+  pendingConnectionDelete = canDelete
+    ? {
+        source: sourceNode.id,
+        target: targetNode.id,
+      }
+    : null;
+  connectionType.innerHTML = `
+    <span class="detail-kind">接続</span>
+    <span class="detail-cluster-meta">${renderOwnerLink(ownerUser)}</span>
+    ${createdAtMarkup}
+  `;
+  bindOwnerDetailLinks(connectionType);
+  connectionTitle.textContent = canEdit ? "接続コメントを編集" : "接続コメント";
   connectionSummary.textContent = `${sourceNode.title} から ${targetNode.title} へのコメント`;
   connectionCommentInput.value = hitbox.comment;
+  connectionCommentInput.readOnly = !canEdit;
   confirmConnectionButton.textContent = "保存";
+  confirmConnectionButton.hidden = !canEdit;
+  disconnectConnectionButton.hidden = !canDelete;
+  updateConnectionActionsLayout();
+  cancelConnectionButton.textContent = canEdit ? "キャンセル" : "閉じる";
   hideLinkCommentTooltip();
   if (!connectionDialog.open) {
     connectionDialog.showModal();
   }
-  connectionCommentInput.focus();
+  if (canEdit) {
+    connectionCommentInput.focus();
+  }
 }
 
 function closeConnectionDialog() {
   pendingConnection = null;
+  pendingConnectionDelete = null;
+  connectionType.textContent = "接続";
+  connectionCommentInput.readOnly = false;
+  confirmConnectionButton.hidden = false;
+  disconnectConnectionButton.hidden = true;
+  updateConnectionActionsLayout();
+  cancelConnectionButton.textContent = "キャンセル";
   connectionDialog.close();
 }
 
@@ -1532,10 +1670,17 @@ function cancelNodeDrag(event) {
 }
 
 function renderNodeList() {
-  const visibleNodes = getNodesByCreatedDesc(getVisibleScopeNodes());
+  const visibleNodes = getNodesByCreatedDesc(getNodeListItems());
   const displayedNodes = visibleNodes.slice(0, nodeListVisibleCount);
+  updateNodeListTabs();
   if (visibleNodes.length === 0) {
-    nodeList.innerHTML = `<p class="node-list-empty">\u5149\u70b9\u306f\u307e\u3060\u3042\u308a\u307e\u305b\u3093</p>`;
+    const emptyMessage =
+      activeNodeListMode === "followed"
+        ? "フォロー中クラスタの光点はまだありません"
+        : activeNodeListMode === "favorites"
+          ? "お気に入りの光点はまだありません"
+          : "光点はまだありません";
+    nodeList.innerHTML = `<p class="node-list-empty">${emptyMessage}</p>`;
     return;
   }
 
@@ -1581,8 +1726,51 @@ function renderNodeList() {
 }
 
 function renderStats() {
-  nodeCount.textContent = String(getVisibleScopeNodes().length);
-  clusterCount.textContent = String(clusters.length);
+  nodeCount.textContent = String(getNodeListItems().length);
+  clusterCount.textContent = String(getClusterListItems().length);
+}
+
+function getOwnNodeListItems() {
+  if (!currentUser) return getVisibleScopeNodes();
+  return nodes.filter((node) => node.ownerUserId === currentUser.id);
+}
+
+function getFollowedNodeListItems() {
+  if (!currentUser) return [];
+  return nodes.filter((node) => node.ownerUserId !== currentUser.id && followedClusterIds.has(node.clusterId));
+}
+
+function getFavoriteNodeListItems() {
+  if (!currentUser) return [];
+  return nodes.filter((node) => node.ownerUserId !== currentUser.id && node.favoritedByCurrentUser);
+}
+
+function getNodeListItems(mode = activeNodeListMode) {
+  if (mode === "followed") return getFollowedNodeListItems();
+  if (mode === "favorites") return getFavoriteNodeListItems();
+  return getOwnNodeListItems();
+}
+
+function updateNodeListTabs() {
+  ownNodeCount.textContent = String(getOwnNodeListItems().length);
+  followedNodeCount.textContent = String(getFollowedNodeListItems().length);
+  favoriteNodeCount.textContent = String(getFavoriteNodeListItems().length);
+  nodeCount.textContent = String(getNodeListItems().length);
+  nodeListTabs.forEach((tab) => {
+    const isActive = tab.dataset.nodeListMode === activeNodeListMode;
+    tab.classList.toggle("is-active", isActive);
+    tab.setAttribute("aria-selected", String(isActive));
+  });
+}
+
+function setNodeListMode(mode) {
+  activeNodeListMode = mode === "followed" || mode === "favorites" ? mode : "own";
+  nodeListVisibleCount = NODE_LIST_PAGE_SIZE;
+  localStorage.setItem("textosphereNodeListMode", activeNodeListMode);
+  renderNodeList();
+  renderNodes();
+  drawLinks();
+  renderStats();
 }
 
 function getNodeSearchValue(node, sortKey) {
@@ -1697,18 +1885,70 @@ function toggleSearchSidebar() {
   setSearchSidebarCollapsed(!searchSidebar.classList.contains("is-collapsed"));
 }
 
+function getOwnClusterListItems() {
+  return clusters;
+}
+
+function getFollowedClusterListItems() {
+  const clusterById = new Map();
+  clusterDirectory.forEach((cluster) => {
+    if (!followedClusterIds.has(cluster.id)) return;
+    if (currentUser && cluster.ownerUserId === currentUser.id) return;
+    clusterById.set(cluster.id, cluster);
+  });
+  return [...clusterById.values()].sort((first, second) => {
+    return String(first.name || "").localeCompare(String(second.name || ""), "ja");
+  });
+}
+
+function getClusterListItems(mode = activeClusterListMode) {
+  return mode === "followed" ? getFollowedClusterListItems() : getOwnClusterListItems();
+}
+
+function getClusterListDescription(cluster) {
+  const description = truncateText(cluster.description || "\u8aac\u660e\u306a\u3057", activeClusterListMode === "followed" ? 28 : 34);
+  if (activeClusterListMode !== "followed") return description;
+  return `${getUserName(cluster.ownerUser)} / ${description}`;
+}
+
+function updateClusterListTabs() {
+  const ownCount = getOwnClusterListItems().length;
+  const followedCount = getFollowedClusterListItems().length;
+  ownClusterCount.textContent = String(ownCount);
+  followedClusterCount.textContent = String(followedCount);
+  clusterListTabs.forEach((tab) => {
+    const isActive = tab.dataset.clusterListMode === activeClusterListMode;
+    tab.classList.toggle("is-active", isActive);
+    tab.setAttribute("aria-selected", String(isActive));
+  });
+}
+
+function setClusterListMode(mode) {
+  activeClusterListMode = mode === "followed" ? "followed" : "own";
+  localStorage.setItem("textosphereClusterListMode", activeClusterListMode);
+  renderClusterList();
+  renderStats();
+}
+
 function renderClusterList() {
-  if (clusters.length === 0) {
-    clusterList.innerHTML = `<p class="cluster-list-empty">クラスタはまだありません</p>`;
+  const listItems = getClusterListItems();
+  updateClusterListTabs();
+
+  if (listItems.length === 0) {
+    const emptyMessage =
+      activeClusterListMode === "followed"
+        ? "\u30d5\u30a9\u30ed\u30fc\u4e2d\u306e\u30af\u30e9\u30b9\u30bf\u306f\u307e\u3060\u3042\u308a\u307e\u305b\u3093"
+        : "\u30af\u30e9\u30b9\u30bf\u306f\u307e\u3060\u3042\u308a\u307e\u305b\u3093";
+    clusterList.innerHTML = `<p class="cluster-list-empty">${emptyMessage}</p>`;
     return;
   }
 
-  clusterList.innerHTML = clusters
+  clusterList.innerHTML = listItems
     .map(
       (cluster) => `
-        <button class="cluster-list-item" type="button" data-cluster-id="${cluster.id}">
+        <button class="cluster-list-item" type="button" data-cluster-id="${escapeHtml(cluster.id)}">
           <span class="cluster-list-title">${escapeHtml(cluster.name)}</span>
-          <span class="cluster-list-description">${escapeHtml(truncateText(cluster.description || "説明なし", 34))}</span>
+          <span class="cluster-list-description">${escapeHtml(getClusterListDescription(cluster))}</span>
         </button>
       `,
     )
@@ -1767,8 +2007,20 @@ function openClusterNodesDialog(clusterId) {
 
   clusterNodesTitle.textContent = cluster.name;
   const nodeCountInCluster = renderClusterNodeList(cluster.id);
+  const clusterDetail = getClusterDetail(cluster.id) || cluster;
   const description = String(cluster.description || "").trim();
-  clusterNodesMeta.textContent = description ? `${nodeCountInCluster}\u4ef6 / ${description}` : `${nodeCountInCluster}\u4ef6`;
+  const createdAtMarkup = renderCreatedAtMeta(clusterDetail.createdAt);
+  clusterNodesType.innerHTML = `
+    <span class="detail-kind">クラスタ</span>
+    <span class="detail-cluster-meta">${renderOwnerLink(clusterDetail.ownerUser)}</span>
+    ${createdAtMarkup}
+  `;
+  bindOwnerDetailLinks(clusterNodesType);
+  const metaParts = [`${nodeCountInCluster}\u4ef6`];
+  if (description) {
+    metaParts.push(description);
+  }
+  clusterNodesMeta.textContent = metaParts.join(" / ");
   if (!clusterNodesDialog.open) {
     clusterNodesDialog.showModal();
   }
@@ -1778,11 +2030,12 @@ function closeClusterNodesDialog() {
   if (clusterNodesDialog.open) {
     clusterNodesDialog.close();
   }
+  clusterNodesType.textContent = "クラスタ";
 }
 
 function getClusterOptionsMarkup() {
   return clusters
-    .map((cluster) => `<option value="${cluster.id}">${escapeHtml(cluster.name)}</option>`)
+    .map((cluster) => `<option value="${escapeHtml(cluster.id)}">${escapeHtml(cluster.name)}</option>`)
     .join("");
 }
 
@@ -1992,7 +2245,7 @@ async function createNodeFromValues({ type, title, body, duration, mediaFile, cl
   const safeBody = String(body || "").replace(/\r\n/g, "\n");
   const safeClusterId = clusters.some((cluster) => cluster.id === clusterId) ? clusterId : getPublicClusterId();
   const newNode = normalizeNode({
-    id: crypto.randomUUID(),
+    id: createClientId(),
     ownerUserId: currentUser?.id || null,
     clusterId: safeClusterId,
     type,
@@ -2005,6 +2258,7 @@ async function createNodeFromValues({ type, title, body, duration, mediaFile, cl
     mediaName: type !== "text" && mediaFile ? mediaFile.name : null,
     likeCount: 0,
     likedByCurrentUser: false,
+    favoritedByCurrentUser: false,
     selection: getDefaultSelection(type, safeBody, safeDuration),
     x: position.x,
     y: position.y,
@@ -2078,7 +2332,7 @@ async function addCluster() {
   if (!name) return;
 
   const localCluster = normalizeCluster({
-    id: crypto.randomUUID(),
+    id: createClientId(),
     ownerUserId: currentUser?.id || null,
     name,
     description,
@@ -2150,6 +2404,11 @@ async function createLinkBetween(source, target, comment = "") {
         });
       }
     } catch (error) {
+      if (error.status === 403) {
+        await loadState();
+        window.alert("この接続は作成または編集できません");
+        return false;
+      }
       apiAvailable = false;
     }
     renderStats();
@@ -2158,21 +2417,71 @@ async function createLinkBetween(source, target, comment = "") {
     return true;
   }
 
-  const newLink = { source, target, ownerUserId: currentUser?.id, comment: safeComment };
+  let newLink = normalizeLink({
+    source,
+    target,
+    ownerUserId: currentUser?.id,
+    ownerUser: currentUser
+      ? { id: currentUser.id, userId: currentUser.userId, userName: currentUser.userName, profileIcon: currentUser.profileIcon }
+      : null,
+    comment: safeComment,
+    createdAt: new Date().toISOString(),
+  });
   try {
     if (apiAvailable) {
-      await apiRequest("/links", {
+      const savedLink = normalizeLink(await apiRequest("/links", {
         method: "POST",
         body: JSON.stringify(newLink),
-      });
+      }));
+      newLink = { ...savedLink, ownerUser: savedLink.ownerUser || newLink.ownerUser };
     }
   } catch (error) {
+    if (error.status === 403) {
+      window.alert("この接続は作成できません");
+      return false;
+    }
     apiAvailable = false;
   }
 
   links = currentLinks;
   hiddenLinks = null;
   links = [...links, newLink];
+  renderStats();
+  updateClearLinksButton();
+  drawLinks();
+  return true;
+}
+
+async function deleteLinkBetween(source, target) {
+  const currentLinks = hiddenLinks ?? links;
+  const existingLink = currentLinks.find(
+    (link) =>
+      (link.source === source && link.target === target) ||
+      (link.source === target && link.target === source),
+  );
+  if (!existingLink || !canDeleteLink(existingLink.ownerUserId)) {
+    return false;
+  }
+
+  links = currentLinks.filter(
+    (link) =>
+      !(
+        (link.source === source && link.target === target) ||
+        (link.source === target && link.target === source)
+      ),
+  );
+  hiddenLinks = null;
+
+  try {
+    if (apiAvailable) {
+      await apiRequest(`/links/${encodeURIComponent(source)}/${encodeURIComponent(target)}`, {
+        method: "DELETE",
+      });
+    }
+  } catch (error) {
+    apiAvailable = false;
+  }
+
   renderStats();
   updateClearLinksButton();
   drawLinks();
@@ -2421,7 +2730,7 @@ function renderMediaDetail(node) {
         }</div>`
       : node.type === "music"
       ? `<div class="media-stage music">
-          <div class="music-artwork-frame" data-music-artwork-node-id="${node.id}">
+          <div class="music-artwork-frame" data-music-artwork-node-id="${escapeHtml(node.id)}">
             <span class="music-artwork-glyph">M</span>
           </div>
           ${bars}${
@@ -2465,45 +2774,62 @@ function getClusterDetail(clusterId) {
 
 function renderMiniUserIcon(user) {
   const fallback = escapeHtml(getUserName(user).slice(0, 1).toUpperCase());
-  const icon = user?.profileIcon || "";
-  if (/^(\/|blob:|data:image\/|https?:)/.test(icon)) {
-    return `<span class="detail-cluster-avatar" aria-hidden="true"><img src="${escapeHtml(resolveMediaUrl(icon))}" alt="" /></span>`;
+  const icon = resolveMediaUrl(user?.profileIcon);
+  if (icon) {
+    return `<span class="detail-cluster-avatar" aria-hidden="true"><img src="${escapeHtml(icon)}" alt="" /></span>`;
   }
   return `<span class="detail-cluster-avatar" aria-hidden="true">${fallback}</span>`;
 }
 
 function renderUserDetailAvatar(user) {
   const fallback = escapeHtml(getUserName(user).slice(0, 1).toUpperCase());
-  const icon = user?.profileIcon || "";
-  if (/^(\/|blob:|data:image\/|https?:)/.test(icon)) {
-    return `<span class="user-detail-avatar" aria-hidden="true"><img src="${escapeHtml(resolveMediaUrl(icon))}" alt="" /></span>`;
+  const icon = resolveMediaUrl(user?.profileIcon);
+  if (icon) {
+    return `<span class="user-detail-avatar" aria-hidden="true"><img src="${escapeHtml(icon)}" alt="" /></span>`;
   }
   return `<span class="user-detail-avatar" aria-hidden="true">${fallback}</span>`;
 }
 
+function renderOwnerLink(user) {
+  const ownerName = getUserName(user);
+  const content = `${renderMiniUserIcon(user)}<span>${escapeHtml(ownerName)}</span>`;
+  if (!user?.id) {
+    return `<span class="detail-owner-link">${content}</span>`;
+  }
+  return `<button class="detail-owner-link" type="button" data-user-id="${escapeHtml(user.id)}">${content}</button>`;
+}
+
+function bindOwnerDetailLinks(container) {
+  container.querySelectorAll(".detail-owner-link[data-user-id]").forEach((ownerLink) => {
+    ownerLink.addEventListener("click", () => {
+      openUserDetail(ownerLink.dataset.userId);
+    });
+  });
+}
+
+function renderCreatedAtMeta(value) {
+  const createdAt = formatDateTime(value);
+  return createdAt ? `<span class="detail-created-at">登録日時 ${escapeHtml(createdAt)}</span>` : "";
+}
+
 function renderDetailMeta(node) {
   const cluster = getClusterDetail(node.clusterId);
-  const createdAt = formatDateTime(node.createdAt);
-  const createdAtMarkup = createdAt ? `<span class="detail-created-at">登録日時 ${escapeHtml(createdAt)}</span>` : "";
+  const createdAtMarkup = renderCreatedAtMeta(node.createdAt);
   if (!cluster) {
     return `<span class="detail-kind">${typeMeta[node.type].label}</span>${createdAtMarkup}`;
   }
 
   const owner = cluster.ownerUser;
-  const ownerName = getUserName(owner);
   const isOwnCluster = currentUser && cluster.ownerUserId === currentUser.id;
   const isFollowed = isOwnCluster || followedClusterIds.has(cluster.id);
   const locked = isOwnCluster ? "disabled" : "";
   return `
     <span class="detail-kind">${typeMeta[node.type].label}</span>
     <span class="detail-cluster-meta">
-      <button class="detail-owner-link" type="button" data-user-id="${escapeHtml(owner?.id || "")}">
-        ${renderMiniUserIcon(owner)}
-        <span>${escapeHtml(ownerName)}</span>
-      </button>
+      ${renderOwnerLink(owner)}
       <span class="detail-cluster-label">- ${escapeHtml(cluster.name)}</span>
       <label class="detail-cluster-follow" title="クラスタをフォロー">
-        <input class="detailClusterFollowInput" type="checkbox" data-cluster-id="${cluster.id}" ${isFollowed ? "checked" : ""} ${locked} />
+        <input class="detailClusterFollowInput" type="checkbox" data-cluster-id="${escapeHtml(cluster.id)}" ${isFollowed ? "checked" : ""} ${locked} />
         <span>フォロー</span>
       </label>
     </span>
@@ -2558,12 +2884,7 @@ function bindDetailMetaActions() {
     });
   }
 
-  const ownerLink = detailType.querySelector(".detail-owner-link");
-  if (ownerLink) {
-    ownerLink.addEventListener("click", () => {
-      openUserDetail(ownerLink.dataset.userId);
-    });
-  }
+  bindOwnerDetailLinks(detailType);
 }
 
 function renderUserDetailCluster(cluster) {
@@ -2576,14 +2897,14 @@ function renderUserDetailCluster(cluster) {
         <strong>${escapeHtml(cluster.name)}</strong>
         <small>${escapeHtml(truncateText(cluster.description || "説明なし", 60))}</small>
       </span>
-      <input class="userDetailClusterFollowInput" type="checkbox" data-cluster-id="${cluster.id}" ${checked} ${locked} />
+      <input class="userDetailClusterFollowInput" type="checkbox" data-cluster-id="${escapeHtml(cluster.id)}" ${checked} ${locked} />
     </label>
   `;
 }
 
 function renderUserDetailNode(node) {
   return `
-    <button class="user-detail-node" type="button" data-user-detail-node-id="${node.id}" style="--node-color: ${typeMeta[node.type].color}">
+    <button class="user-detail-node" type="button" data-user-detail-node-id="${escapeHtml(node.id)}" style="--node-color: ${typeMeta[node.type].color}">
       <span class="node-list-dot" aria-hidden="true">${typeMeta[node.type].glyph}</span>
       <span>
         <strong>${escapeHtml(node.title)}</strong>
@@ -2597,6 +2918,14 @@ function renderUserDetailPage(data) {
   const user = data.user;
   const userNodes = data.nodes.map(normalizeNode);
   const userClusters = data.clusters.map(normalizeCluster);
+  const isCurrentUser = currentUser && user.id === currentUser.id;
+  const userActions = isCurrentUser
+    ? `<div class="user-detail-actions"><button class="secondary-button user-detail-edit-profile" type="button">プロフィール編集</button><button class="secondary-button user-detail-logout" type="button">ログアウト</button></div>`
+    : `<div class="user-detail-actions"><button class="${
+        data.blockedByCurrentUser ? "secondary-button" : "danger-button"
+      } user-detail-block" type="button" data-user-id="${escapeHtml(user.id)}" data-blocked="${
+        data.blockedByCurrentUser ? "1" : "0"
+      }">${data.blockedByCurrentUser ? "ブロック解除" : "ブロック"}</button></div>`;
   return `
     <header class="user-detail-header">
       ${renderUserDetailAvatar(user)}
@@ -2604,6 +2933,7 @@ function renderUserDetailPage(data) {
         <p class="eyebrow">User</p>
         <h2>${escapeHtml(getUserName(user))} <span class="user-detail-user-id">${escapeHtml(user.userId)}</span></h2>
       </div>
+      ${userActions}
     </header>
     <section class="user-detail-section">
       <h3>自己紹介文</h3>
@@ -2624,7 +2954,53 @@ function renderUserDetailPage(data) {
   `;
 }
 
+async function setUserBlock(userId, shouldBlock, button) {
+  if (!userId || (currentUser && userId === currentUser.id)) return;
+  if (
+    shouldBlock &&
+    !window.confirm(
+      "このユーザーは自分の光点に対して接続線を作ることが出来なくなります。既存の接続線についてもこのユーザーが作成したものは削除されます。よろしいですか？",
+    )
+  ) {
+    return;
+  }
+
+  if (button) button.disabled = true;
+  try {
+    await apiRequest(`/users/${userId}/block`, {
+      method: shouldBlock ? "PUT" : "DELETE",
+    });
+    if (shouldBlock) {
+      await loadState();
+    }
+    await openUserDetail(userId);
+  } catch (error) {
+    if (button) button.disabled = false;
+    window.alert(shouldBlock ? "ブロックできませんでした" : "ブロック解除できませんでした");
+  }
+}
+
 function bindUserDetailPage() {
+  const editProfileButton = userDetailContent.querySelector(".user-detail-edit-profile");
+  if (editProfileButton) {
+    editProfileButton.addEventListener("click", () => {
+      closeUserDetailDialog();
+      openProfileDialog();
+    });
+  }
+
+  const logoutFromDetailButton = userDetailContent.querySelector(".user-detail-logout");
+  if (logoutFromDetailButton) {
+    logoutFromDetailButton.addEventListener("click", clearAuth);
+  }
+
+  const blockButton = userDetailContent.querySelector(".user-detail-block");
+  if (blockButton) {
+    blockButton.addEventListener("click", () => {
+      setUserBlock(blockButton.dataset.userId, blockButton.dataset.blocked !== "1", blockButton);
+    });
+  }
+
   userDetailContent.querySelectorAll(".userDetailClusterFollowInput").forEach((checkbox) => {
     checkbox.addEventListener("change", () => {
       setClusterFollow(checkbox.dataset.clusterId, checkbox.checked, checkbox);
@@ -2678,13 +3054,14 @@ function getDetailPreview(node) {
 
 function renderRelationNodeCard(node, link) {
   const comment = String(link.comment || "").trim();
+  const imageUrl = node.type === "image" ? resolveMediaUrl(node.mediaUrl) : "";
   const mediaThumb =
-    node.type === "image" && node.mediaUrl
-      ? `<img class="relation-thumb-image" src="${escapeHtml(node.mediaUrl)}" alt="${escapeHtml(node.title)}" />`
+    imageUrl
+      ? `<img class="relation-thumb-image" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(node.title)}" />`
       : `<span class="relation-thumb-glyph">${typeMeta[node.type].glyph}</span>`;
 
   return `
-    <button class="relation-node-card" type="button" data-related-node-id="${node.id}" style="--node-color: ${typeMeta[node.type].color}">
+    <button class="relation-node-card" type="button" data-related-node-id="${escapeHtml(node.id)}" style="--node-color: ${typeMeta[node.type].color}">
       <span class="relation-thumb" aria-hidden="true">${mediaThumb}</span>
       <span class="relation-card-main">
         <span class="relation-card-meta">${typeMeta[node.type].label}</span>
@@ -2736,6 +3113,7 @@ function renderDetailLayout(node) {
       <section class="detail-current-node" aria-label="現在の光点">
         ${node.type === "text" ? renderTextDetail(node) : renderMediaDetail(node)}
         ${renderNodeLikeAction(node)}
+        ${renderNodeFavoriteAction(node)}
         ${renderDetailComposer()}
         ${renderDeleteNodeAction()}
       </section>
@@ -2758,6 +3136,20 @@ function renderNodeLikeAction(node) {
   `;
 }
 
+function renderNodeFavoriteAction(node) {
+  if (!currentUser || node.ownerUserId === currentUser.id) return "";
+  const pressed = node.favoritedByCurrentUser ? "true" : "false";
+  const className = node.favoritedByCurrentUser ? "node-favorite-button is-favorited" : "node-favorite-button";
+  return `
+    <section class="node-favorite-panel" aria-label="favorite node">
+      <button class="${className}" id="detailFavoriteButton" type="button" aria-pressed="${pressed}">
+        <span class="node-favorite-icon" aria-hidden="true">★</span>
+        <span>${node.favoritedByCurrentUser ? "お気に入り解除" : "お気に入りに追加"}</span>
+      </button>
+    </section>
+  `;
+}
+
 function updateNodeLikeState(id, likeCount, likedByCurrentUser) {
   nodes = nodes.map((node) =>
     node.id === id
@@ -2765,6 +3157,17 @@ function updateNodeLikeState(id, likeCount, likedByCurrentUser) {
           ...node,
           likeCount: Math.max(0, Number(likeCount || 0)),
           likedByCurrentUser: Boolean(likedByCurrentUser),
+        }
+      : node,
+  );
+}
+
+function updateNodeFavoriteState(id, favoritedByCurrentUser) {
+  nodes = nodes.map((node) =>
+    node.id === id
+      ? {
+          ...node,
+          favoritedByCurrentUser: Boolean(favoritedByCurrentUser),
         }
       : node,
   );
@@ -2779,6 +3182,18 @@ function refreshDetailLikeButton(id) {
   likeButton.classList.toggle("is-liked", node.likedByCurrentUser);
   likeButton.setAttribute("aria-pressed", String(node.likedByCurrentUser));
   likeCount.textContent = String(Number(node.likeCount || 0));
+}
+
+function refreshDetailFavoriteButton(id) {
+  const node = nodes.find((item) => item.id === id);
+  const favoriteButton = detailContent.querySelector("#detailFavoriteButton");
+  if (!node || !favoriteButton) return;
+
+  favoriteButton.classList.toggle("is-favorited", node.favoritedByCurrentUser);
+  favoriteButton.setAttribute("aria-pressed", String(node.favoritedByCurrentUser));
+  favoriteButton.querySelector("span:last-child").textContent = node.favoritedByCurrentUser
+    ? "お気に入り解除"
+    : "お気に入りに追加";
 }
 
 async function toggleNodeLike(id) {
@@ -2804,6 +3219,35 @@ async function toggleNodeLike(id) {
     updateNodeLikeState(id, previousLikeCount, node.likedByCurrentUser);
     refreshDetailLikeButton(id);
     renderSearchResults();
+  }
+}
+
+async function toggleNodeFavorite(id) {
+  const node = nodes.find((item) => item.id === id);
+  if (!node || !currentUser || node.ownerUserId === currentUser.id) return;
+
+  const nextFavorited = !node.favoritedByCurrentUser;
+  updateNodeFavoriteState(id, nextFavorited);
+  refreshDetailFavoriteButton(id);
+  renderNodeList();
+  renderStats();
+  renderNodes();
+  drawLinks();
+
+  if (!apiAvailable) return;
+
+  try {
+    const result = await apiRequest(`/nodes/${id}/favorite`, {
+      method: nextFavorited ? "PUT" : "DELETE",
+    });
+    updateNodeFavoriteState(id, result.favoritedByCurrentUser);
+    refreshDetailFavoriteButton(id);
+    refreshScopeViews();
+  } catch (error) {
+    apiAvailable = false;
+    updateNodeFavoriteState(id, node.favoritedByCurrentUser);
+    refreshDetailFavoriteButton(id);
+    refreshScopeViews();
   }
 }
 
@@ -3018,6 +3462,15 @@ function bindNodeLikeAction(node) {
   });
 }
 
+function bindNodeFavoriteAction(node) {
+  const favoriteButton = detailContent.querySelector("#detailFavoriteButton");
+  if (!favoriteButton) return;
+
+  favoriteButton.addEventListener("click", () => {
+    toggleNodeFavorite(node.id);
+  });
+}
+
 function bindRelationNodeCards() {
   detailContent.querySelectorAll(".relation-node-card").forEach((card) => {
     card.addEventListener("click", () => {
@@ -3033,7 +3486,9 @@ function bindRelationNodeCards() {
 async function bindMusicArtwork(node) {
   if (node.type !== "music" || !node.mediaUrl) return;
 
-  const artworkFrame = detailContent.querySelector(`[data-music-artwork-node-id="${node.id}"]`);
+  const artworkFrame = Array.from(detailContent.querySelectorAll("[data-music-artwork-node-id]")).find(
+    (element) => element.dataset.musicArtworkNodeId === node.id,
+  );
   if (!artworkFrame) return;
 
   artworkFrame.classList.add("is-loading");
@@ -3300,6 +3755,7 @@ function openDetail(id) {
   bindDetailMetaActions();
   bindDetailComposer(node);
   bindNodeLikeAction(node);
+  bindNodeFavoriteAction(node);
   bindDeleteNodeAction(node);
   bindRelationNodeCards();
   bindMusicArtwork(node);
@@ -3392,8 +3848,11 @@ addButton.addEventListener("click", addNode);
 addClusterButton.addEventListener("click", addCluster);
 loginButton.addEventListener("click", login);
 signupButton.addEventListener("click", signup);
-logoutButton.addEventListener("click", clearAuth);
-userSummaryButton.addEventListener("click", openProfileDialog);
+userSummaryButton.addEventListener("click", () => {
+  if (currentUser) {
+    openUserDetail(currentUser.id);
+  }
+});
 closeProfileDialogButton.addEventListener("click", closeProfileDialog);
 cancelProfileButton.addEventListener("click", closeProfileDialog);
 saveProfileButton.addEventListener("click", saveProfile);
@@ -3401,6 +3860,12 @@ closeUserDetailDialogButton.addEventListener("click", closeUserDetailDialog);
 closeClusterNodesDialogButton.addEventListener("click", closeClusterNodesDialog);
 composerToggle.addEventListener("click", () => togglePanel(composerToggle, composerPanel));
 clusterToggle.addEventListener("click", () => togglePanel(clusterToggle, clusterPanel));
+nodeListTabs.forEach((tab) => {
+  tab.addEventListener("click", () => setNodeListMode(tab.dataset.nodeListMode));
+});
+clusterListTabs.forEach((tab) => {
+  tab.addEventListener("click", () => setClusterListMode(tab.dataset.clusterListMode));
+});
 shuffleButton.addEventListener("click", shuffleNodes);
 clearLinksButton.addEventListener("click", clearLinks);
 searchTypeInput.addEventListener("change", resetSearchResults);
@@ -3413,6 +3878,11 @@ closeDialogButton.addEventListener("click", () => {
 });
 closeConnectionDialogButton.addEventListener("click", closeConnectionDialog);
 cancelConnectionButton.addEventListener("click", closeConnectionDialog);
+disconnectConnectionButton.addEventListener("click", async () => {
+  if (!pendingConnectionDelete) return;
+  await deleteLinkBetween(pendingConnectionDelete.source, pendingConnectionDelete.target);
+  closeConnectionDialog();
+});
 confirmConnectionButton.addEventListener("click", async () => {
   if (!pendingConnection) return;
   await createLinkBetween(pendingConnection.source, pendingConnection.target, connectionCommentInput.value);

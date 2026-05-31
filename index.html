@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Textosphere</title>
-    <link rel="stylesheet" href="styles.css?v=20260529-login-id-or-email" />
+    <link rel="stylesheet" href="styles.css?v=20260530-node-favorites" />
   </head>
   <body>
     <section class="auth-shell" id="authShell" hidden>
@@ -32,7 +32,7 @@
             <label class="field"><span>生年月日</span><input id="signupBirthDateInput" type="date" /></label>
             <label class="field"><span>プロフィールアイコン</span><input id="signupProfileIconInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" /></label>
             <label class="field"><span>自己紹介文</span><textarea id="signupBioInput" rows="4" placeholder="自己紹介文"></textarea></label>
-            <button class="secondary-button" id="signupButton" type="button">ユーザーを作成</button>
+            <button class="secondary-button" id="signupButton" type="button" disabled>ユーザーを作成</button>
           </section>
         </div>
         <p class="auth-message" id="authMessage"></p>
@@ -58,6 +58,11 @@
         </section>
         <section class="panel node-list-panel">
           <div class="panel-heading"><h2>光点一覧</h2><span id="nodeCount">0</span></div>
+          <div class="node-list-tabs" role="tablist" aria-label="光点一覧の表示切替">
+            <button class="node-list-tab is-active" id="ownNodeListTab" type="button" role="tab" aria-selected="true" data-node-list-mode="own">自分 <span id="ownNodeCount">0</span></button>
+            <button class="node-list-tab" id="followedNodeListTab" type="button" role="tab" aria-selected="false" data-node-list-mode="followed">フォロー <span id="followedNodeCount">0</span></button>
+            <button class="node-list-tab" id="favoriteNodeListTab" type="button" role="tab" aria-selected="false" data-node-list-mode="favorites">お気に入り <span id="favoriteNodeCount">0</span></button>
+          </div>
           <div class="node-list" id="nodeList"></div>
         </section>
         <button class="panel-toggle" id="composerToggle" type="button" aria-expanded="false" aria-controls="composerPanel">新しい光点</button>
@@ -72,6 +77,10 @@
         </section>
         <section class="panel cluster-list-panel">
           <div class="panel-heading"><h2>クラスタ一覧</h2><span id="clusterCount">0</span></div>
+          <div class="cluster-list-tabs" role="tablist" aria-label="クラスタ一覧の表示切替">
+            <button class="cluster-list-tab is-active" id="ownClusterListTab" type="button" role="tab" aria-selected="true" data-cluster-list-mode="own">自分 <span id="ownClusterCount">0</span></button>
+            <button class="cluster-list-tab" id="followedClusterListTab" type="button" role="tab" aria-selected="false" data-cluster-list-mode="followed">フォロー中 <span id="followedClusterCount">0</span></button>
+          </div>
           <div class="cluster-list" id="clusterList"></div>
         </section>
         <button class="panel-toggle" id="clusterToggle" type="button" aria-expanded="false" aria-controls="clusterPanel">新しいクラスタ</button>
@@ -106,10 +115,10 @@
       </aside>
     </div>
     <dialog class="detail-dialog" id="detailDialog"><div class="dialog-shell"><button class="close-button" id="closeDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="detailType"></div><h2 id="detailTitle"></h2><div class="detail-content" id="detailContent"></div></div></dialog>
-    <dialog class="connection-dialog" id="connectionDialog"><div class="connection-shell"><button class="close-button" id="closeConnectionDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type">接続</div><h2 id="connectionTitle">光点を接続</h2><p class="connection-summary" id="connectionSummary"></p><label class="field"><span>コメント</span><textarea id="connectionCommentInput" rows="4" maxlength="200" placeholder="接続にコメントを付ける"></textarea></label><div class="connection-actions"><button class="secondary-button" id="cancelConnectionButton" type="button">キャンセル</button><button class="primary-button" id="confirmConnectionButton" type="button">線で繋ぐ</button></div></div></dialog>
-    <dialog class="profile-dialog" id="profileDialog"><div class="profile-shell"><button class="close-button" id="closeProfileDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type">ユーザー</div><button class="secondary-button profile-logout-button" id="logoutButton" type="button">ログアウト</button><h2>プロフィール編集</h2><label class="field"><span>ユーザー名</span><input id="profileUserNameInput" type="text" placeholder="表示名" /></label><label class="field"><span>ユーザーID</span><input id="profileUserIdInput" type="text" autocomplete="off" /></label><label class="field"><span>パスワード</span><input id="profilePasswordInput" type="password" autocomplete="new-password" placeholder="変更する場合のみ入力" /></label><label class="field"><span>生年月日</span><input id="profileBirthDateInput" type="date" /></label><label class="field"><span>プロフィールアイコン</span><input id="profileIconInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" /></label><label class="field"><span>自己紹介文</span><textarea id="profileBioInput" rows="5" placeholder="自己紹介文"></textarea></label><p class="profile-message" id="profileMessage"></p><div class="profile-actions"><button class="secondary-button" id="cancelProfileButton" type="button">キャンセル</button><button class="primary-button" id="saveProfileButton" type="button">保存</button></div></div></dialog>
+    <dialog class="connection-dialog" id="connectionDialog"><div class="connection-shell"><button class="close-button" id="closeConnectionDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="connectionType">接続</div><h2 id="connectionTitle">光点を接続</h2><p class="connection-summary" id="connectionSummary"></p><label class="field"><span>コメント</span><textarea id="connectionCommentInput" rows="4" maxlength="200" placeholder="接続にコメントを付ける"></textarea></label><div class="connection-actions"><button class="secondary-button" id="cancelConnectionButton" type="button">キャンセル</button><button class="danger-button" id="disconnectConnectionButton" type="button" hidden>接続を切る</button><button class="primary-button" id="confirmConnectionButton" type="button">線で繋ぐ</button></div></div></dialog>
+    <dialog class="profile-dialog" id="profileDialog"><div class="profile-shell"><button class="close-button" id="closeProfileDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type">ユーザー</div><h2>プロフィール編集</h2><label class="field"><span>ユーザー名</span><input id="profileUserNameInput" type="text" placeholder="表示名" /></label><label class="field"><span>ユーザーID</span><input id="profileUserIdInput" type="text" autocomplete="off" /></label><label class="field"><span>パスワード</span><input id="profilePasswordInput" type="password" autocomplete="new-password" placeholder="変更する場合のみ入力" /></label><label class="field"><span>生年月日</span><input id="profileBirthDateInput" type="date" /></label><label class="field"><span>プロフィールアイコン</span><input id="profileIconInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" /></label><label class="field"><span>自己紹介文</span><textarea id="profileBioInput" rows="5" placeholder="自己紹介文"></textarea></label><p class="profile-message" id="profileMessage"></p><div class="profile-actions"><button class="secondary-button" id="cancelProfileButton" type="button">キャンセル</button><button class="primary-button" id="saveProfileButton" type="button">保存</button></div></div></dialog>
     <dialog class="user-detail-dialog" id="userDetailDialog"><div class="user-detail-shell"><button class="close-button" id="closeUserDetailDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="user-detail-content" id="userDetailContent"></div></div></dialog>
-    <dialog class="cluster-nodes-dialog" id="clusterNodesDialog"><div class="cluster-nodes-shell"><button class="close-button" id="closeClusterNodesDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type">クラスタ</div><h2 id="clusterNodesTitle"></h2><p class="cluster-nodes-meta" id="clusterNodesMeta"></p><div class="cluster-nodes-content" id="clusterNodesContent"></div></div></dialog>
-    <script src="app.js?v=20260529-login-id-or-email"></script>
+    <dialog class="cluster-nodes-dialog" id="clusterNodesDialog"><div class="cluster-nodes-shell"><button class="close-button" id="closeClusterNodesDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="clusterNodesType">クラスタ</div><h2 id="clusterNodesTitle"></h2><p class="cluster-nodes-meta" id="clusterNodesMeta"></p><div class="cluster-nodes-content" id="clusterNodesContent"></div></div></dialog>
+    <script src="app.js?v=20260530-node-favorites"></script>
   </body>
 </html>
