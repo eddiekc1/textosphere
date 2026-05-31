@@ -4,16 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Textosphere</title>
-    <link rel="stylesheet" href="styles.css?v=20260530-node-favorites" />
+    <link rel="stylesheet" href="styles.css?v=20260531-user-delete" />
   </head>
   <body>
     <section class="auth-shell" id="authShell" hidden>
       <div class="auth-card">
         <div class="brand auth-brand">
-          <div class="brand-mark" aria-hidden="true"></div>
+          <!--<div class="brand-mark" aria-hidden="true"></div> -->
+          <button class="brand-mark brand-info-button" id="brandInfoButton" type="button" aria-label="Textosphereについて開く" title="Textosphereについて"></button>
           <div>
-            <p class="eyebrow">SNS Prototype</p>
+            <p class="eyebrow">Outer Space SNS</p>
             <h1>Textosphere</h1>
+            <p class="brand-info-statement">新たにつなげよう、点を線に。</p>
+            <p class="brand-info-subtitle">Where texts connect beyond time.</p>
           </div>
         </div>
         <div class="auth-grid">
@@ -41,9 +44,9 @@
     <div class="app-shell" id="appShell" hidden>
       <aside class="sidebar" aria-label="投稿作成">
         <header class="brand">
-          <div class="brand-mark" aria-hidden="true"></div>
+          <button class="brand-mark brand-info-button" id="brandInfoButton" type="button" aria-label="Textosphereについて開く" title="Textosphereについて"></button>
           <div>
-            <p class="eyebrow">Where texts connect beyond time.</p>
+            <p class="eyebrow">Outer Space SNS</p>
             <h1>Textosphere</h1>
           </div>
         </header>
@@ -114,11 +117,209 @@
         </section>
       </aside>
     </div>
+    <dialog class="brand-info-dialog" id="brandInfoDialog">
+      <div class="brand-info-shell">
+        <button class="close-button" id="closeBrandInfoDialogButton" type="button" aria-label="閉じる">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
+        <div class="brand-info-hero">
+          <div class="brand-mark brand-info-mark" aria-hidden="true"></div>
+          <div>
+            <p class="eyebrow">Outer Space SNS</p>
+            <h2 id="brandInfoTitle">Textosphere</h2>
+            <p class="brand-info-statement">新たにつなげよう、点を線に。</p>
+            <p class="brand-info-subtitle">Where texts connect beyond time.</p>
+          </div>
+        </div>
+        <div class="brand-info-tabs" role="tablist" aria-label="Textosphereについて">
+          <button class="brand-info-tab is-active" id="brandInfoAboutTab" type="button" role="tab" aria-selected="true" aria-controls="brandInfoAboutPanel" data-brand-info-tab="about">About</button>
+          <button class="brand-info-tab" id="brandInfoTermsTab" type="button" role="tab" aria-selected="false" aria-controls="brandInfoTermsPanel" data-brand-info-tab="terms">利用規約・プライバシーポリシー</button>
+        </div>
+        <div class="brand-info-content">
+        <section class="brand-info-panel" id="brandInfoAboutPanel" role="tabpanel" aria-labelledby="brandInfoAboutTab">
+        <h1>Textosphereへようこそ</h1>
+        <p>Textosphereは、時間や形式を越えてテキスト、画像、音楽、映像の断片をつなぐためのSNSです。</p>
+        <p>ひとつの光点として表された言葉や記憶が、別の光点と線で結ばれることで、新しい文脈や対話が生まれる場所を目指しています。</p>
+        <h2>Textosphereを作った理由</h2>
+        <p>世の中には色々なタイプのSNSがありますが、そのどれもが「人対人」のコミュニケーションツールであるか、もしくは「作品単体」をアップロードし配信する為の場所です。そして、コミュニケーションも作品も、その時限りの生産と消費のサイクルに飲み込まれ、後から振り返られることはほとんどありません。</p>
+        <p>この状況に、なんとも言えない窮屈さを感じたことはないでしょうか。たしかに人は「今」を生きている。ただ、「今」というのは過去から流れてきた膨大な時間の流れのほんの終端にすぎません。「たしかあの時の小さな議論は今思うと大きな意味があったような……」「たしかあの時のあの作品は、今思うと別の解釈ができるような……」。そう思ったとしても、今のSNSは過去を発掘するには向いていません。人は時間の流れのなかで生き、常に変化し続けます。それと共に、テクストの文脈も変わるのです。「今」という檻を乗り越え、その「文脈」を表現する手段はないだろうか？</p><p>それがTextosphereの出発点でした。</p>
+        <h2>Textosphereの特徴</h2>
+        <ul>
+          <li>テキスト、画像、音楽、映像を投稿可能。</li>
+          <li>投稿は2Dの空間に光点として表され、時間の流れの中で消えることがない。</li>
+          <li>光点は別の光点と線でつなぐことができ、その意味をコメントで記述できる。</li>
+          <li>視覚的に光点のつながりが見える（文脈の把握が容易）。</li>
+          <li>人を直接フォローするのではなく、光点のまとまり「クラスタ」をフォローする。</li>
+          <li>光点を個別で「お気に入り」に登録することもできる。</li>
+          <li>光点はそれが持つ意味によって徐々に移動し、自動的に集合を作る。</li>
+        </ul>
+        <h2>開発者からのお礼</h2>
+        <p>Textosphereに来ていただき、ありがとうございます。このSNSの機能を使って、ぜひ自由に遊んでみてください。また、現状個人開発なのでバグや至らぬ点があるかもしれませんが、みなさんの気づきについては共有していただけると嬉しいです。</p>
+        </section>
+        <section class="brand-info-panel" id="brandInfoTermsPanel" role="tabpanel" aria-labelledby="brandInfoTermsTab" hidden>
+<textarea rows="6" readonly>
+Textosphere 利用規約
+
+最終更新日：2026年5月31日
+
+第1条（適用）
+
+本規約は、Textosphere（以下「本サービス」）の利用条件を定めるものです。
+利用者は、本規約に同意したうえで本サービスを利用するものとします。
+
+第2条（利用資格）
+
+本サービスは18歳以上の方のみ利用できます。
+
+利用者は、登録情報について真実かつ正確な情報を提供するものとします。
+
+第3条（アカウント）
+
+利用者は自己の責任においてアカウントを管理するものとします。
+
+第三者によるアカウント利用により生じた損害について、運営者は責任を負いません。
+
+第4条（投稿内容）
+
+利用者が投稿した文章、画像、その他のコンテンツに関する著作権は利用者本人に帰属します。
+
+利用者は、本サービスの運営に必要な範囲において、運営者が投稿内容を保存・表示・バックアップすることを許諾するものとします。
+
+第5条（接続線機能）
+
+利用者は、自身の投稿と他の利用者の投稿との間に接続線を作成することができます。
+
+接続線の作成は、元となる投稿の著作権その他の権利を取得するものではありません。
+
+接続線に付随するコメントについては、その作成者が責任を負うものとします。
+
+第6条（AIによる分類）
+
+本サービスでは、投稿内容およびクラスタ情報をAIによって解析し、メガクラスタ等の分類を行う場合があります。
+
+分類結果は参考情報として提供されるものであり、その正確性、完全性または妥当性を保証するものではありません。
+
+第7条（禁止事項）
+
+利用者は以下の行為を行ってはなりません。
+
+・法令または公序良俗に反する行為
+・他者への誹謗中傷、嫌がらせ
+・個人情報の無断公開
+・スパム投稿
+・不正アクセスまたはこれを試みる行為
+・本サービスの運営を妨害する行為
+・他者の権利を侵害する行為
+・その他、運営者が不適切と判断する行為
+
+第8条（投稿の削除および利用停止）
+
+運営者は、本規約に違反する行為が確認された場合、事前通知なく投稿の削除、アカウント停止または利用禁止措置を行うことができます。
+
+第9条（退会）
+
+利用者は、所定の手続によりアカウントを削除し、退会することができます。
+
+第10条（サービスの変更・終了）
+
+運営者は、利用者への事前通知なく、本サービスの内容を変更、停止または終了できるものとします。
+
+第11条（免責事項）
+
+本サービスは現状有姿で提供されます。
+
+運営者は、本サービスの継続性、正確性、安全性、特定目的への適合性について保証しません。
+
+利用者間または第三者との間で生じた紛争について、運営者は責任を負いません。
+
+第12条（規約の変更）
+
+運営者は必要に応じて本規約を変更できるものとします。
+
+変更後の規約は、本サービス上に掲載した時点から効力を生じます。
+</textarea>
+<textarea rows="6" readonly>
+Textosphere プライバシーポリシー
+
+最終更新日：2026年5月31日
+
+1. 取得する情報
+
+本サービスでは以下の情報を取得する場合があります。
+
+・メールアドレス
+・ユーザー名
+・パスワード（ハッシュ化された情報）
+・生年月日
+・自己紹介文
+・投稿タイトル
+・投稿本文
+・アップロードファイル
+・クラスタ情報
+・接続線情報
+・接続線コメント
+・IPアドレス
+・アクセスログ
+
+2. 利用目的
+
+取得した情報は以下の目的で利用します。
+
+・本サービスの提供
+・本人確認および認証
+・不正利用防止
+・サービス改善
+・お問い合わせ対応
+・障害対応および保守運用
+・AIによる投稿分類
+
+3. AIによる解析
+
+本サービスでは、投稿タイトル、投稿本文およびクラスタ情報をAIサービスへ送信し、投稿属性等の分類を行う場合があります。
+
+運営者は、サービス提供に必要な範囲でのみ情報を利用します。
+
+4. 第三者提供
+
+法令に基づく場合を除き、取得した個人情報を第三者へ提供しません。
+
+ただし、AIサービス等の業務委託先へ、サービス提供に必要な範囲で情報を提供する場合があります。
+
+5. 安全管理
+
+運営者は、取得した情報について不正アクセス、漏えい、滅失または毀損の防止に努めます。
+
+6. 開示・訂正・削除
+
+利用者は、自身の登録情報について開示、訂正または削除を求めることができます。
+
+7. アカウント削除
+
+利用者がアカウントを削除した場合、運営者は合理的な期間内に関連情報を削除します。
+
+ただし、法令上保存が必要な情報およびバックアップデータはこの限りではありません。
+
+8. ポリシーの変更
+
+運営者は必要に応じて本ポリシーを変更できるものとします。
+
+変更後のポリシーは、本サービス上に掲載した時点から効力を生じます。
+
+9. お問い合わせ
+
+本ポリシーに関するお問い合わせは eddie.k.c.18@gmail.com までお願い致します。
+</textarea>
+        </section>
+        </div>
+      </div>
+    </dialog>
     <dialog class="detail-dialog" id="detailDialog"><div class="dialog-shell"><button class="close-button" id="closeDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="detailType"></div><h2 id="detailTitle"></h2><div class="detail-content" id="detailContent"></div></div></dialog>
     <dialog class="connection-dialog" id="connectionDialog"><div class="connection-shell"><button class="close-button" id="closeConnectionDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="connectionType">接続</div><h2 id="connectionTitle">光点を接続</h2><p class="connection-summary" id="connectionSummary"></p><label class="field"><span>コメント</span><textarea id="connectionCommentInput" rows="4" maxlength="2000" placeholder="接続にコメントを付ける"></textarea></label><div class="connection-actions"><button class="secondary-button" id="cancelConnectionButton" type="button">キャンセル</button><button class="danger-button" id="disconnectConnectionButton" type="button" hidden>接続を切る</button><button class="primary-button" id="confirmConnectionButton" type="button">線で繋ぐ</button></div></div></dialog>
     <dialog class="profile-dialog" id="profileDialog"><div class="profile-shell"><button class="close-button" id="closeProfileDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type">ユーザー</div><h2>プロフィール編集</h2><label class="field"><span>ユーザー名</span><input id="profileUserNameInput" type="text" placeholder="表示名" maxlength="25" /></label><label class="field"><span>ユーザーID</span><input id="profileUserIdInput" type="text" autocomplete="off" maxlength="25" /></label><label class="field"><span>パスワード</span><input id="profilePasswordInput" type="password" autocomplete="new-password" placeholder="変更する場合のみ入力" maxlength="25" /></label><label class="field"><span>生年月日</span><input id="profileBirthDateInput" type="date" /></label><label class="field"><span>プロフィールアイコン</span><input id="profileIconInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" /></label><label class="field"><span>自己紹介文</span><textarea id="profileBioInput" rows="5" placeholder="自己紹介文" maxlength="4000"></textarea></label><p class="profile-message" id="profileMessage"></p><div class="profile-actions"><button class="secondary-button" id="cancelProfileButton" type="button">キャンセル</button><button class="primary-button" id="saveProfileButton" type="button">保存</button></div></div></dialog>
     <dialog class="user-detail-dialog" id="userDetailDialog"><div class="user-detail-shell"><button class="close-button" id="closeUserDetailDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="user-detail-content" id="userDetailContent"></div></div></dialog>
     <dialog class="cluster-nodes-dialog" id="clusterNodesDialog"><div class="cluster-nodes-shell"><button class="close-button" id="closeClusterNodesDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="clusterNodesType">クラスタ</div><h2 id="clusterNodesTitle"></h2><p class="cluster-nodes-meta" id="clusterNodesMeta"></p><div class="cluster-nodes-content" id="clusterNodesContent"></div></div></dialog>
-    <script src="app.js?v=20260531-input-limits"></script>
+    <script src="app.js?v=20260531-user-delete"></script>
   </body>
 </html>

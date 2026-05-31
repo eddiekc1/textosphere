@@ -414,6 +414,21 @@ function normalizeProfileIconUrl(value) {
   }
 }
 
+function getUploadFilePathFromUrl(url) {
+  const value = String(url || "");
+  if (!value.startsWith("/uploads/") || value.includes("\\") || value.split("/").includes("..")) return null;
+  const filePath = path.join(__dirname, value.slice(1));
+  const relative = path.relative(uploadDir, filePath);
+  return relative && !relative.startsWith("..") && !path.isAbsolute(relative) ? filePath : null;
+}
+
+function unlinkUploadedFile(url) {
+  const filePath = getUploadFilePathFromUrl(url);
+  if (filePath) {
+    fs.unlink(filePath, () => {});
+  }
+}
+
 function toNode(row) {
   return {
     id: row.id,
@@ -1464,6 +1479,49 @@ app.get("/api/users/:id", requireAuth, async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+});
+
+app.delete("/api/users/:id", requireAuth, async (req, res, next) => {
+  const targetUserId = req.params.id;
+  if (targetUserId !== req.user.id || targetUserId === systemUserId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const client = await pool.connect();
+  const uploadUrls = [];
+  try {
+    await client.query("begin");
+    const userResult = await client.query("select profile_icon from users where id = $1 for update", [targetUserId]);
+    if (userResult.rows.length === 0) {
+      await client.query("rollback");
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    if (userResult.rows[0].profile_icon) {
+      uploadUrls.push(userResult.rows[0].profile_icon);
+    }
+
+    const mediaResult = await client.query("select media_url from nodes where owner_user_id = $1 and media_url is not null", [
+      targetUserId,
+    ]);
+    mediaResult.rows.forEach((row) => uploadUrls.push(row.media_url));
+
+    await client.query("delete from links where owner_user_id = $1", [targetUserId]);
+    await client.query("delete from nodes where owner_user_id = $1", [targetUserId]);
+    await client.query("delete from clusters where owner_user_id = $1", [targetUserId]);
+    await client.query("delete from users where id = $1", [targetUserId]);
+    await client.query("commit");
+
+    [...new Set(uploadUrls)].forEach(unlinkUploadedFile);
+    res.status(204).end();
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    next(error);
+  } finally {
+    client.release();
   }
 });
 

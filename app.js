@@ -99,6 +99,11 @@ const clusterNodesType = document.querySelector("#clusterNodesType");
 const clusterNodesTitle = document.querySelector("#clusterNodesTitle");
 const clusterNodesMeta = document.querySelector("#clusterNodesMeta");
 const clusterNodesContent = document.querySelector("#clusterNodesContent");
+const brandInfoButton = document.querySelector("#brandInfoButton");
+const brandInfoDialog = document.querySelector("#brandInfoDialog");
+const closeBrandInfoDialogButton = document.querySelector("#closeBrandInfoDialogButton");
+const brandInfoTabs = document.querySelectorAll(".brand-info-tab");
+const brandInfoPanels = document.querySelectorAll(".brand-info-panel");
 
 const API_BASE = window.location.protocol === "file:" ? "http://localhost:3000/api" : "/api";
 const PUBLIC_CLUSTER_ID = "00000000-0000-4000-8000-000000000001";
@@ -827,6 +832,41 @@ function closeProfileDialog() {
   if (profileDialog.open) {
     profileDialog.close();
   }
+}
+
+function setBrandInfoTab(targetTab) {
+  brandInfoTabs.forEach((tab) => {
+    const isActive = tab.dataset.brandInfoTab === targetTab;
+    tab.classList.toggle("is-active", isActive);
+    tab.setAttribute("aria-selected", String(isActive));
+    tab.tabIndex = isActive ? 0 : -1;
+  });
+
+  brandInfoPanels.forEach((panel) => {
+    panel.hidden = panel.id !== `brandInfo${targetTab === "about" ? "About" : "Terms"}Panel`;
+  });
+}
+
+function openBrandInfoDialog() {
+  setBrandInfoTab("about");
+  if (!brandInfoDialog.open) {
+    brandInfoDialog.showModal();
+  }
+}
+
+function closeBrandInfoDialog() {
+  if (brandInfoDialog.open) {
+    brandInfoDialog.close();
+  }
+}
+
+function focusAdjacentBrandInfoTab(direction) {
+  const tabs = Array.from(brandInfoTabs);
+  const activeIndex = tabs.findIndex((tab) => tab.classList.contains("is-active"));
+  const nextIndex = (activeIndex + direction + tabs.length) % tabs.length;
+  const nextTab = tabs[nextIndex];
+  setBrandInfoTab(nextTab.dataset.brandInfoTab);
+  nextTab.focus();
 }
 
 async function saveProfile() {
@@ -2981,7 +3021,7 @@ function renderUserDetailPage(data) {
   const userClusters = data.clusters.map(normalizeCluster);
   const isCurrentUser = currentUser && user.id === currentUser.id;
   const userActions = isCurrentUser
-    ? `<div class="user-detail-actions"><button class="secondary-button user-detail-edit-profile" type="button">プロフィール編集</button><button class="secondary-button user-detail-logout" type="button">ログアウト</button></div>`
+    ? `<div class="user-detail-actions"><button class="secondary-button user-detail-edit-profile" type="button">プロフィール編集</button><button class="secondary-button user-detail-logout" type="button">ログアウト</button><button class="danger-button user-detail-delete-user" type="button">ユーザー削除</button></div>`
     : `<div class="user-detail-actions"><button class="${
         data.blockedByCurrentUser ? "secondary-button" : "danger-button"
       } user-detail-block" type="button" data-user-id="${escapeHtml(user.id)}" data-blocked="${
@@ -3041,6 +3081,23 @@ async function setUserBlock(userId, shouldBlock, button) {
   }
 }
 
+async function deleteCurrentUser(button) {
+  if (!currentUser) return;
+  const confirmed = window.confirm(
+    "ユーザーを削除します。この操作は取り消せません。あなたの投稿、クラスタ、接続、ログイン情報も削除されます。よろしいですか？",
+  );
+  if (!confirmed) return;
+
+  if (button) button.disabled = true;
+  try {
+    await apiRequest(`/users/${currentUser.id}`, { method: "DELETE" });
+    clearAuth();
+  } catch (error) {
+    if (button) button.disabled = false;
+    window.alert("ユーザーを削除できませんでした。時間をおいてもう一度お試しください。");
+  }
+}
+
 function bindUserDetailPage() {
   const editProfileButton = userDetailContent.querySelector(".user-detail-edit-profile");
   if (editProfileButton) {
@@ -3053,6 +3110,11 @@ function bindUserDetailPage() {
   const logoutFromDetailButton = userDetailContent.querySelector(".user-detail-logout");
   if (logoutFromDetailButton) {
     logoutFromDetailButton.addEventListener("click", clearAuth);
+  }
+
+  const deleteUserButton = userDetailContent.querySelector(".user-detail-delete-user");
+  if (deleteUserButton) {
+    deleteUserButton.addEventListener("click", () => deleteCurrentUser(deleteUserButton));
   }
 
   const blockButton = userDetailContent.querySelector(".user-detail-block");
@@ -3927,6 +3989,20 @@ userSummaryButton.addEventListener("click", () => {
   if (currentUser) {
     openUserDetail(currentUser.id);
   }
+});
+brandInfoButton.addEventListener("click", openBrandInfoDialog);
+closeBrandInfoDialogButton.addEventListener("click", closeBrandInfoDialog);
+brandInfoTabs.forEach((tab) => {
+  tab.addEventListener("click", () => setBrandInfoTab(tab.dataset.brandInfoTab));
+  tab.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      focusAdjacentBrandInfoTab(1);
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      focusAdjacentBrandInfoTab(-1);
+    }
+  });
 });
 closeProfileDialogButton.addEventListener("click", closeProfileDialog);
 cancelProfileButton.addEventListener("click", closeProfileDialog);
