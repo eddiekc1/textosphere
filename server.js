@@ -22,6 +22,17 @@ const megaClusterStrength = { initialPx: 2, minPx: 1, maxPx: 5 };
 const megaNodeMinDistancePx = 80;
 const megaGravityIntervalMs = 20_000;
 const megaDriftIntervalMs = 60_000;
+const megaClusterClassifierEnabled = process.env.MEGA_CLUSTER_CLASSIFIER_ENABLED !== "false";
+const megaClusterClassifierModel = process.env.MEGA_CLUSTER_CLASSIFIER_MODEL || "gpt-5.4-nano";
+const parsedMegaClusterClassifierTimeoutMs = Number(process.env.MEGA_CLUSTER_CLASSIFIER_TIMEOUT_MS || 3000);
+const megaClusterClassifierTimeoutMs = Number.isFinite(parsedMegaClusterClassifierTimeoutMs)
+  ? Math.max(100, parsedMegaClusterClassifierTimeoutMs)
+  : 3000;
+const megaClusterClassifierMaxText = {
+  title: 300,
+  body: 4000,
+  clusterDescription: 1000,
+};
 let megaGravityTimer = null;
 let megaGravityRunning = false;
 let lastMegaDriftAt = 0;
@@ -33,7 +44,17 @@ const pool = new Pool({
 
 fs.mkdirSync(uploadDir, { recursive: true });
 
-const maxUploadBytes = 100 * 1024 * 1024;
+const inputLimits = {
+  userName: 25,
+  userId: 25,
+  password: 25,
+  clusterName: 100,
+  nodeTitle: 300,
+  longText: 4000,
+  clusterDescription: 1000,
+  linkComment: 2000,
+};
+const maxUploadBytes = 30 * 1024 * 1024;
 
 app.disable("x-powered-by");
 
@@ -160,7 +181,12 @@ function validatePassword(password) {
     /[0-9]/.test(value),
     /[_\-!#$%()[\]@+*?/]/.test(value),
   ].filter(Boolean).length;
-  return value.length >= 8 && groups >= 3 && /^[A-Za-z0-9_\-!#$%()[\]@+*?/]+$/.test(value);
+  return (
+    value.length >= 8 &&
+    value.length <= inputLimits.password &&
+    groups >= 3 &&
+    /^[A-Za-z0-9_\-!#$%()[\]@+*?/]+$/.test(value)
+  );
 }
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
@@ -171,6 +197,18 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
 function verifyPassword(password, salt, expectedHash) {
   const { hash } = hashPassword(password, salt);
   return crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(expectedHash, "hex"));
+}
+
+function textLength(value) {
+  return Array.from(String(value || "")).length;
+}
+
+function isWithinTextLimit(value, maxLength) {
+  return textLength(value) <= maxLength;
+}
+
+function sendTextLimitError(res, field, maxLength) {
+  res.status(400).json({ error: `${field} must be ${maxLength} characters or fewer` });
 }
 
 function hashToken(token) {
@@ -299,16 +337,23 @@ function parseMultipartForm(req, res, next) {
   }
 
   let totalBytes = 0;
+  let tooLarge = false;
   const chunks = [];
   req.on("data", (chunk) => {
     totalBytes += chunk.length;
     if (totalBytes > maxUploadBytes) {
-      req.destroy();
+      tooLarge = true;
+      chunks.length = 0;
       return;
     }
+    if (tooLarge) return;
     chunks.push(chunk);
   });
   req.on("end", () => {
+    if (tooLarge) {
+      res.status(413).json({ error: "Upload file is too large" });
+      return;
+    }
     try {
       const { fields, file } = parseMultipartBuffer(Buffer.concat(chunks), boundaryMatch[1] || boundaryMatch[2]);
       req.body = fields;
@@ -433,7 +478,9 @@ function countKeywordOccurrences(text, keyword) {
   return count;
 }
 
-async function classifyNodeMegaClusters({ title, body, clusterDescription, originNodeId }) {
+async function getSourceMegaClusterIds(originNodeId) {
+  if (!originNodeId) return [];
+
   const sourceMegaClusterIds = [];
   if (originNodeId) {
     const { rows } = await pool.query(
@@ -443,6 +490,10 @@ async function classifyNodeMegaClusters({ title, body, clusterDescription, origi
     rows.forEach((row) => sourceMegaClusterIds.push(Number(row.mega_cluster_id)));
   }
 
+  return sourceMegaClusterIds;
+}
+
+function classifyNodeMegaClustersByKeywords({ title, body, clusterDescription, sourceMegaClusterIds = [] }) {
   const scores = new Map();
   const titleText = String(title || "");
   const bodyText = String(body || "");
@@ -468,6 +519,164 @@ async function classifyNodeMegaClusters({ title, body, clusterDescription, origi
     .sort((first, second) => second[1] - first[1] || first[0] - second[0])
     .slice(0, 3)
     .map(([id, score]) => ({ id, score }));
+}
+
+function hasUsableOpenAiApiKey() {
+  const apiKey = String(process.env.OPENAI_API_KEY || "").trim();
+  if (!apiKey) return false;
+  return !/placeholder|replace|dummy|example|your[_-]?key/i.test(apiKey);
+}
+
+function truncateForMegaClusterClassifier(value, maxLength) {
+  const text = String(value || "");
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength);
+}
+
+function getMegaClusterClassifierSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["assignments"],
+    properties: {
+      assignments: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "score"],
+          properties: {
+            id: { type: "integer" },
+            score: { type: "number" },
+          },
+        },
+      },
+    },
+  };
+}
+
+function getOpenAiResponseText(data) {
+  if (typeof data?.output_text === "string") return data.output_text;
+  if (!Array.isArray(data?.output)) return "";
+
+  return data.output
+    .flatMap((item) => (Array.isArray(item?.content) ? item.content : []))
+    .map((content) => content?.text || "")
+    .filter(Boolean)
+    .join("\n");
+}
+
+function normalizeLlmMegaClusterAssignments(value) {
+  const rawAssignments = Array.isArray(value?.assignments) ? value.assignments : [];
+  const seen = new Set();
+  const assignments = [];
+
+  for (const assignment of rawAssignments) {
+    const id = Number(assignment?.id);
+    const score = Number(assignment?.score);
+    if (!Number.isInteger(id) || id < 0 || id > 21 || seen.has(id)) continue;
+    if (!Number.isFinite(score)) continue;
+    seen.add(id);
+    assignments.push({
+      id,
+      score: Number(clamp(score, 0, 1).toFixed(3)),
+    });
+  }
+
+  return assignments.slice(0, 3);
+}
+
+async function classifyNodeMegaClustersWithLlm({ title, body, clusterDescription, sourceMegaClusterIds }) {
+  if (!megaClusterClassifierEnabled || !hasUsableOpenAiApiKey()) return null;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), megaClusterClassifierTimeoutMs);
+  const classifierInput = {
+    megaClusters: megaClusterDefinitions.map((definition) => ({
+      id: definition.id,
+      name: definition.name,
+      keywords: definition.keywords,
+    })),
+    node: {
+      title: truncateForMegaClusterClassifier(title, megaClusterClassifierMaxText.title),
+      body: truncateForMegaClusterClassifier(body, megaClusterClassifierMaxText.body),
+      clusterDescription: truncateForMegaClusterClassifier(
+        clusterDescription,
+        megaClusterClassifierMaxText.clusterDescription,
+      ),
+      sourceMegaClusterIds,
+    },
+  };
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: megaClusterClassifierModel,
+        input: [
+          {
+            role: "system",
+            content:
+              "You classify Textosphere nodes into up to three mega clusters. Return only the structured JSON. Prefer semantic fit over literal keyword overlap. Use score as confidence from 0 to 1.",
+          },
+          {
+            role: "user",
+            content: JSON.stringify(classifierInput),
+          },
+        ],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "mega_cluster_classification",
+            strict: true,
+            schema: getMegaClusterClassifierSchema(),
+          },
+        },
+        max_output_tokens: 300,
+        store: false,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenAI API responded with ${response.status}`);
+    }
+
+    const data = await response.json();
+    const outputText = getOpenAiResponseText(data);
+    const parsed = JSON.parse(outputText);
+    const assignments = normalizeLlmMegaClusterAssignments(parsed);
+    return assignments.length > 0 ? assignments : null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function classifyNodeMegaClusters({ title, body, clusterDescription, originNodeId }) {
+  const sourceMegaClusterIds = await getSourceMegaClusterIds(originNodeId);
+
+  try {
+    const llmAssignments = await classifyNodeMegaClustersWithLlm({
+      title,
+      body,
+      clusterDescription,
+      sourceMegaClusterIds,
+    });
+    if (llmAssignments) return llmAssignments;
+  } catch (error) {
+    console.error("Mega cluster LLM classification failed; falling back to keyword classifier", error.message);
+  }
+
+  return classifyNodeMegaClustersByKeywords({
+    title,
+    body,
+    clusterDescription,
+    sourceMegaClusterIds,
+  });
 }
 
 async function replaceNodeMegaClusters(client, nodeId, assignments) {
@@ -900,6 +1109,18 @@ app.post("/api/auth/register", parseMultipartForm, async (req, res, next) => {
       res.status(400).json({ error: "Invalid email" });
       return;
     }
+    if (!isWithinTextLimit(userName, inputLimits.userName)) {
+      sendTextLimitError(res, "User name", inputLimits.userName);
+      return;
+    }
+    if (!isWithinTextLimit(userId, inputLimits.userId)) {
+      sendTextLimitError(res, "User ID", inputLimits.userId);
+      return;
+    }
+    if (!isWithinTextLimit(bio, inputLimits.longText)) {
+      sendTextLimitError(res, "Bio", inputLimits.longText);
+      return;
+    }
     if (!/^[A-Za-z0-9_-]+$/.test(userId)) {
       res.status(400).json({ error: "Invalid user ID" });
       return;
@@ -986,6 +1207,18 @@ app.patch("/api/auth/me", requireAuth, parseMultipartForm, async (req, res, next
     const bio = String(req.body.bio || "").trim();
     let profileIcon = req.user.profileIcon;
 
+    if (!isWithinTextLimit(userName, inputLimits.userName)) {
+      sendTextLimitError(res, "User name", inputLimits.userName);
+      return;
+    }
+    if (!isWithinTextLimit(userId, inputLimits.userId)) {
+      sendTextLimitError(res, "User ID", inputLimits.userId);
+      return;
+    }
+    if (!isWithinTextLimit(bio, inputLimits.longText)) {
+      sendTextLimitError(res, "Bio", inputLimits.longText);
+      return;
+    }
     if (!/^[A-Za-z0-9_-]+$/.test(userId)) {
       res.status(400).json({ error: "Invalid user ID" });
       return;
@@ -1299,6 +1532,14 @@ app.post("/api/clusters", requireAuth, async (req, res, next) => {
       res.status(400).json({ error: "Cluster name is required" });
       return;
     }
+    if (!isWithinTextLimit(name, inputLimits.clusterName)) {
+      sendTextLimitError(res, "Cluster name", inputLimits.clusterName);
+      return;
+    }
+    if (!isWithinTextLimit(description, inputLimits.clusterDescription)) {
+      sendTextLimitError(res, "Cluster description", inputLimits.clusterDescription);
+      return;
+    }
 
     const { rows } = await pool.query(
       `
@@ -1414,6 +1655,16 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
       res.status(400).json({ error: "Invalid node type" });
       return;
     }
+    const safeTitle = String(title || type).trim() || type;
+    const safeBody = String(body || "").replace(/\r\n/g, "\n");
+    if (!isWithinTextLimit(safeTitle, inputLimits.nodeTitle)) {
+      sendTextLimitError(res, "Node title", inputLimits.nodeTitle);
+      return;
+    }
+    if (!isWithinTextLimit(safeBody, inputLimits.longText)) {
+      sendTextLimitError(res, "Node body", inputLimits.longText);
+      return;
+    }
 
     if (req.file && type === "text") {
       res.status(400).json({ error: "Text nodes cannot include media files" });
@@ -1449,7 +1700,7 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
 
     const parsedSelection = parseSelection(selection);
 
-    const max = type === "text" ? body.length : type === "image" ? 0 : Number(duration || 0);
+    const max = type === "text" ? safeBody.length : type === "image" ? 0 : Number(duration || 0);
     const selectionStart = clamp(Number(parsedSelection?.start ?? 0), 0, max);
     const selectionEnd = clamp(Number(parsedSelection?.end ?? max), selectionStart, max);
     const { rows: clusterRows } = await pool.query("select id, description from clusters where id = $1 and owner_user_id = $2", [
@@ -1473,8 +1724,8 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
         req.user.id,
         safeClusterId,
         type,
-        title || type,
-        body,
+        safeTitle,
+        safeBody,
         type === "music" || type === "video" ? Number(duration || 0) : null,
         selectionStart,
         selectionEnd,
@@ -1486,8 +1737,8 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
       ],
     );
     const assignments = await classifyNodeMegaClusters({
-      title: title || type,
-      body,
+      title: safeTitle,
+      body: safeBody,
       clusterDescription,
       originNodeId,
     });
@@ -1593,8 +1844,13 @@ app.delete("/api/nodes/:id", requireAuth, async (req, res, next) => {
 app.post("/api/links", requireAuth, async (req, res, next) => {
   try {
     const { source, target, comment = "" } = req.body;
+    const safeComment = String(comment || "").trim();
     if (!source || !target || source === target) {
       res.status(400).json({ error: "Invalid link" });
+      return;
+    }
+    if (!isWithinTextLimit(safeComment, inputLimits.linkComment)) {
+      sendTextLimitError(res, "Link comment", inputLimits.linkComment);
       return;
     }
 
@@ -1621,7 +1877,7 @@ app.post("/api/links", requireAuth, async (req, res, next) => {
         on conflict do nothing
         returning *
       `,
-      [crypto.randomUUID(), req.user.id, source, target, String(comment).slice(0, 200)],
+      [crypto.randomUUID(), req.user.id, source, target, safeComment],
     );
 
     if (rows.length === 0) {
@@ -1651,7 +1907,7 @@ app.post("/api/links", requireAuth, async (req, res, next) => {
              or (source_node_id = $2 and target_node_id = $1)
           returning *
         `,
-        [source, target, String(comment).slice(0, 200)],
+        [source, target, safeComment],
       );
       res.json(toLink(existing.rows[0]));
       return;
@@ -1949,6 +2205,10 @@ function startMegaClusterGravity() {
 }
 
 app.use((error, req, res, next) => {
+  if (error.type === "entity.too.large") {
+    res.status(413).json({ error: "Request body is too large" });
+    return;
+  }
   console.error(error);
   res.status(500).json({
     error: "Server error",

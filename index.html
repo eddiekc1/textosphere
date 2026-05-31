@@ -20,18 +20,18 @@
           <section class="auth-panel">
             <h2>ログイン</h2>
             <label class="field"><span>メールアドレス / ユーザーID</span><input id="loginEmailInput" type="text" autocomplete="username" /></label>
-            <label class="field"><span>パスワード</span><input id="loginPasswordInput" type="password" autocomplete="off" value="" /></label>
+            <label class="field"><span>パスワード</span><input id="loginPasswordInput" type="password" autocomplete="off" value="" maxlength="25" /></label>
             <button class="primary-button" id="loginButton" type="button">ログイン</button>
           </section>
           <section class="auth-panel">
             <h2>ユーザー作成</h2>
             <label class="field"><span>メールアドレス</span><input id="signupEmailInput" type="email" autocomplete="email" /></label>
-            <label class="field"><span>ユーザー名</span><input id="signupUserNameInput" type="text" placeholder="表示名" /></label>
-            <label class="field"><span>ユーザーID</span><input id="signupUserIdInput" type="text" autocomplete="off" value="" placeholder="半角英数、_、-" /></label>
-            <label class="field"><span>パスワード</span><input id="signupPasswordInput" type="password" autocomplete="new-password" /></label>
+            <label class="field"><span>ユーザー名</span><input id="signupUserNameInput" type="text" placeholder="表示名" maxlength="25" /></label>
+            <label class="field"><span>ユーザーID</span><input id="signupUserIdInput" type="text" autocomplete="off" value="" placeholder="半角英数、_、-" maxlength="25" /></label>
+            <label class="field"><span>パスワード</span><input id="signupPasswordInput" type="password" autocomplete="new-password" maxlength="25" /></label>
             <label class="field"><span>生年月日</span><input id="signupBirthDateInput" type="date" /></label>
             <label class="field"><span>プロフィールアイコン</span><input id="signupProfileIconInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" /></label>
-            <label class="field"><span>自己紹介文</span><textarea id="signupBioInput" rows="4" placeholder="自己紹介文"></textarea></label>
+            <label class="field"><span>自己紹介文</span><textarea id="signupBioInput" rows="4" placeholder="自己紹介文" maxlength="4000"></textarea></label>
             <button class="secondary-button" id="signupButton" type="button" disabled>ユーザーを作成</button>
           </section>
         </div>
@@ -70,8 +70,8 @@
           <div class="panel-heading"><h2>新しい光点</h2></div>
           <label class="field"><span>クラスタ</span><select id="clusterInput"></select></label>
           <label class="field"><span>タイプ</span><select id="typeInput"><option value="text">テキスト</option><option value="image">画像</option><option value="music">音楽</option><option value="video">映像</option></select></label>
-          <label class="field"><span>タイトル</span><input id="titleInput" type="text" placeholder="記憶の断片、曲名、映像名" /></label>
-          <label class="field field-text" id="textField"><span>本文</span><textarea id="bodyInput" rows="7" placeholder="本文を入力してください"></textarea></label>
+          <label class="field"><span>タイトル</span><input id="titleInput" type="text" placeholder="記憶の断片、曲名、映像名" maxlength="300" /></label>
+          <label class="field field-text" id="textField"><span>本文</span><textarea id="bodyInput" rows="7" placeholder="本文を入力してください" maxlength="4000"></textarea></label>
           <div class="field field-media is-hidden" id="mediaField"><span>ファイル</span><input id="mediaFileInput" type="file" accept="image/png,image/jpeg,image/gif,audio/mpeg,video/mp4,.png,.jpg,.jpeg,.gif,.mp3,.mp4" /><div class="media-drop-zone" id="mediaDropZone"><strong>ファイルをドロップ</strong><small id="mediaDropStatus">ここへファイルをドラッグ＆ドロップできます</small><button class="ghost-button" id="clearDroppedMediaButton" type="button" hidden>解除</button></div><div class="clipboard-image-panel is-hidden" id="clipboardImagePanel" tabindex="0"><div class="clipboard-image-copy"><strong>画像を貼り付け</strong><small id="clipboardImageStatus">ここをクリックして Ctrl+V で貼り付けできます</small></div><img id="clipboardImagePreview" alt="" hidden /><button class="ghost-button" id="clearClipboardImageButton" type="button" hidden>解除</button></div><div class="duration-field" id="durationField"><span>再生時間</span><div class="duration-grid"><input id="durationInput" type="number" min="10" max="900" value="180" /><span>秒</span></div></div></div>
           <button class="primary-button" id="addButton" type="button">光点を追加</button>
         </section>
@@ -86,8 +86,8 @@
         <button class="panel-toggle" id="clusterToggle" type="button" aria-expanded="false" aria-controls="clusterPanel">新しいクラスタ</button>
         <section class="panel cluster-panel" id="clusterPanel" hidden>
           <div class="panel-heading"><h2>新しいクラスタ</h2></div>
-          <label class="field"><span>クラスタ名</span><input id="clusterNameInput" type="text" placeholder="クラスタ名" /></label>
-          <label class="field"><span>説明</span><textarea id="clusterDescriptionInput" rows="4" placeholder="説明を入力してください"></textarea></label>
+          <label class="field"><span>クラスタ名</span><input id="clusterNameInput" type="text" placeholder="クラスタ名" maxlength="100" /></label>
+          <label class="field"><span>説明</span><textarea id="clusterDescriptionInput" rows="4" placeholder="説明を入力してください" maxlength="1000"></textarea></label>
           <button class="primary-button" id="addClusterButton" type="button">クラスタを追加</button>
         </section>
       </aside>
@@ -115,10 +115,10 @@
       </aside>
     </div>
     <dialog class="detail-dialog" id="detailDialog"><div class="dialog-shell"><button class="close-button" id="closeDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="detailType"></div><h2 id="detailTitle"></h2><div class="detail-content" id="detailContent"></div></div></dialog>
-    <dialog class="connection-dialog" id="connectionDialog"><div class="connection-shell"><button class="close-button" id="closeConnectionDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="connectionType">接続</div><h2 id="connectionTitle">光点を接続</h2><p class="connection-summary" id="connectionSummary"></p><label class="field"><span>コメント</span><textarea id="connectionCommentInput" rows="4" maxlength="200" placeholder="接続にコメントを付ける"></textarea></label><div class="connection-actions"><button class="secondary-button" id="cancelConnectionButton" type="button">キャンセル</button><button class="danger-button" id="disconnectConnectionButton" type="button" hidden>接続を切る</button><button class="primary-button" id="confirmConnectionButton" type="button">線で繋ぐ</button></div></div></dialog>
-    <dialog class="profile-dialog" id="profileDialog"><div class="profile-shell"><button class="close-button" id="closeProfileDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type">ユーザー</div><h2>プロフィール編集</h2><label class="field"><span>ユーザー名</span><input id="profileUserNameInput" type="text" placeholder="表示名" /></label><label class="field"><span>ユーザーID</span><input id="profileUserIdInput" type="text" autocomplete="off" /></label><label class="field"><span>パスワード</span><input id="profilePasswordInput" type="password" autocomplete="new-password" placeholder="変更する場合のみ入力" /></label><label class="field"><span>生年月日</span><input id="profileBirthDateInput" type="date" /></label><label class="field"><span>プロフィールアイコン</span><input id="profileIconInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" /></label><label class="field"><span>自己紹介文</span><textarea id="profileBioInput" rows="5" placeholder="自己紹介文"></textarea></label><p class="profile-message" id="profileMessage"></p><div class="profile-actions"><button class="secondary-button" id="cancelProfileButton" type="button">キャンセル</button><button class="primary-button" id="saveProfileButton" type="button">保存</button></div></div></dialog>
+    <dialog class="connection-dialog" id="connectionDialog"><div class="connection-shell"><button class="close-button" id="closeConnectionDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="connectionType">接続</div><h2 id="connectionTitle">光点を接続</h2><p class="connection-summary" id="connectionSummary"></p><label class="field"><span>コメント</span><textarea id="connectionCommentInput" rows="4" maxlength="2000" placeholder="接続にコメントを付ける"></textarea></label><div class="connection-actions"><button class="secondary-button" id="cancelConnectionButton" type="button">キャンセル</button><button class="danger-button" id="disconnectConnectionButton" type="button" hidden>接続を切る</button><button class="primary-button" id="confirmConnectionButton" type="button">線で繋ぐ</button></div></div></dialog>
+    <dialog class="profile-dialog" id="profileDialog"><div class="profile-shell"><button class="close-button" id="closeProfileDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type">ユーザー</div><h2>プロフィール編集</h2><label class="field"><span>ユーザー名</span><input id="profileUserNameInput" type="text" placeholder="表示名" maxlength="25" /></label><label class="field"><span>ユーザーID</span><input id="profileUserIdInput" type="text" autocomplete="off" maxlength="25" /></label><label class="field"><span>パスワード</span><input id="profilePasswordInput" type="password" autocomplete="new-password" placeholder="変更する場合のみ入力" maxlength="25" /></label><label class="field"><span>生年月日</span><input id="profileBirthDateInput" type="date" /></label><label class="field"><span>プロフィールアイコン</span><input id="profileIconInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" /></label><label class="field"><span>自己紹介文</span><textarea id="profileBioInput" rows="5" placeholder="自己紹介文" maxlength="4000"></textarea></label><p class="profile-message" id="profileMessage"></p><div class="profile-actions"><button class="secondary-button" id="cancelProfileButton" type="button">キャンセル</button><button class="primary-button" id="saveProfileButton" type="button">保存</button></div></div></dialog>
     <dialog class="user-detail-dialog" id="userDetailDialog"><div class="user-detail-shell"><button class="close-button" id="closeUserDetailDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="user-detail-content" id="userDetailContent"></div></div></dialog>
     <dialog class="cluster-nodes-dialog" id="clusterNodesDialog"><div class="cluster-nodes-shell"><button class="close-button" id="closeClusterNodesDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="clusterNodesType">クラスタ</div><h2 id="clusterNodesTitle"></h2><p class="cluster-nodes-meta" id="clusterNodesMeta"></p><div class="cluster-nodes-content" id="clusterNodesContent"></div></div></dialog>
-    <script src="app.js?v=20260530-node-favorites"></script>
+    <script src="app.js?v=20260531-input-limits"></script>
   </body>
 </html>

@@ -102,6 +102,18 @@ const clusterNodesContent = document.querySelector("#clusterNodesContent");
 
 const API_BASE = window.location.protocol === "file:" ? "http://localhost:3000/api" : "/api";
 const PUBLIC_CLUSTER_ID = "00000000-0000-4000-8000-000000000001";
+const INPUT_LIMITS = {
+  userName: 25,
+  userId: 25,
+  password: 25,
+  clusterName: 100,
+  nodeTitle: 300,
+  longText: 4000,
+  clusterDescription: 1000,
+  linkComment: 2000,
+};
+const MAX_UPLOAD_BYTES = 30 * 1024 * 1024;
+const MAX_UPLOAD_MB = 30;
 
 const labels = {
   text: "\u30c6\u30ad\u30b9\u30c8",
@@ -252,6 +264,14 @@ function getClipboardImageFile(event) {
   return new File([blob], `clipboard-image-${Date.now()}${extension}`, { type: blob.type });
 }
 
+function isFileWithinUploadLimit(file) {
+  return !file || file.size <= MAX_UPLOAD_BYTES;
+}
+
+function getUploadLimitMessage() {
+  return `ファイルサイズは${MAX_UPLOAD_MB}MB以下にしてください`;
+}
+
 function clearPastedImage(state, previewElement, statusElement, clearButtonElement, panelElement) {
   if (state.previewUrl) {
     URL.revokeObjectURL(state.previewUrl);
@@ -299,6 +319,13 @@ function handleImagePaste(event, state, previewElement, statusElement, clearButt
   const file = getClipboardImageFile(event);
   if (!file) return false;
   event.preventDefault();
+  if (!isFileWithinUploadLimit(file)) {
+    clearPastedImage(state, previewElement, statusElement, clearButtonElement, panelElement);
+    if (statusElement) {
+      statusElement.textContent = getUploadLimitMessage();
+    }
+    return false;
+  }
   setPastedImage(state, file, previewElement, statusElement, clearButtonElement, panelElement, fileInputElement);
   return true;
 }
@@ -389,6 +416,13 @@ function handleMediaFileDrop(
     return false;
   }
 
+  if (!isFileWithinUploadLimit(file)) {
+    clearDroppedMedia(state, statusElement, clearButtonElement, dropZoneElement, type);
+    dropZoneElement.classList.add("is-invalid");
+    statusElement.textContent = getUploadLimitMessage();
+    return false;
+  }
+
   setDroppedMedia(state, file, statusElement, clearButtonElement, dropZoneElement, fileInputElement);
   onAccepted?.(file);
   return true;
@@ -452,9 +486,19 @@ function updateMediaDropZone(type, dropZoneElement, state, statusElement, clearB
 function getMediaFileForType(type, fileInputElement, pastedImageState, droppedMediaState = null) {
   if (type === "text") return null;
   const selectedFile = fileInputElement.files ? fileInputElement.files[0] : null;
-  if (selectedFile) return selectedFile;
-  if (droppedMediaState?.file) return droppedMediaState.file;
-  return type === "image" ? pastedImageState.file : null;
+  const file = selectedFile || droppedMediaState?.file || (type === "image" ? pastedImageState.file : null);
+  if (!isFileWithinUploadLimit(file)) {
+    window.alert(getUploadLimitMessage());
+    return null;
+  }
+  return file;
+}
+
+function hasOversizedMediaFile(type, fileInputElement, pastedImageState, droppedMediaState = null) {
+  if (type === "text") return false;
+  const selectedFile = fileInputElement.files ? fileInputElement.files[0] : null;
+  const file = selectedFile || droppedMediaState?.file || (type === "image" ? pastedImageState.file : null);
+  return !!file && !isFileWithinUploadLimit(file);
 }
 
 function escapeHtml(value) {
@@ -747,6 +791,10 @@ async function signup() {
     formData.append("birthDate", signupBirthDateInput.value || "");
     formData.append("bio", signupBioInput.value);
     if (signupProfileIconInput.files && signupProfileIconInput.files[0]) {
+      if (!isFileWithinUploadLimit(signupProfileIconInput.files[0])) {
+        setAuthMessage(getUploadLimitMessage());
+        return;
+      }
       formData.append("profileIconFile", signupProfileIconInput.files[0]);
     }
 
@@ -791,6 +839,10 @@ async function saveProfile() {
   formData.append("birthDate", profileBirthDateInput.value || "");
   formData.append("bio", profileBioInput.value);
   if (profileIconInput.files && profileIconInput.files[0]) {
+    if (!isFileWithinUploadLimit(profileIconInput.files[0])) {
+      profileMessage.textContent = getUploadLimitMessage();
+      return;
+    }
     formData.append("profileIconFile", profileIconInput.files[0]);
   }
 
@@ -2306,6 +2358,10 @@ async function createNodeFromValues({ type, title, body, duration, mediaFile, cl
 }
 
 async function addNode() {
+  if (hasOversizedMediaFile(typeInput.value, mediaFileInput, pastedComposerImage, droppedComposerMedia)) {
+    window.alert(getUploadLimitMessage());
+    return;
+  }
   const mediaFile = getMediaFileForType(typeInput.value, mediaFileInput, pastedComposerImage, droppedComposerMedia);
   await createNodeFromValues({
     type: typeInput.value,
@@ -2512,6 +2568,11 @@ function updateTypeFields() {
 
 function updateDurationFromMediaFile() {
   const file = mediaFileInput.files ? mediaFileInput.files[0] : null;
+  if (file && !isFileWithinUploadLimit(file)) {
+    window.alert(getUploadLimitMessage());
+    mediaFileInput.value = "";
+    return;
+  }
   if (file) {
     clearDroppedMedia(droppedComposerMedia, mediaDropStatus, clearDroppedMediaButton, mediaDropZone, typeInput.value);
     clearPastedImage(pastedComposerImage, clipboardImagePreview, clipboardImageStatus, clearClipboardImageButton, clipboardImagePanel);
@@ -3272,11 +3333,11 @@ function renderDetailComposer() {
         </label>
         <label class="field">
           <span>タイトル</span>
-          <input class="detailComposerTitle" type="text" placeholder="新しい光点のタイトル" />
+          <input class="detailComposerTitle" type="text" placeholder="新しい光点のタイトル" maxlength="${INPUT_LIMITS.nodeTitle}" />
         </label>
         <label class="field">
           <span>本文</span>
-          <textarea class="detailComposerBody" rows="4" placeholder="本文を入力してください"></textarea>
+          <textarea class="detailComposerBody" rows="4" placeholder="本文を入力してください" maxlength="${INPUT_LIMITS.longText}"></textarea>
         </label>
         <div class="field detailComposerMedia is-hidden">
           <span>ファイル</span>
@@ -3391,6 +3452,11 @@ function bindDetailComposer(originNode) {
     updateDetailMediaFields();
   });
   fileField.addEventListener("change", () => {
+    if (fileField.files && fileField.files[0] && !isFileWithinUploadLimit(fileField.files[0])) {
+      window.alert(getUploadLimitMessage());
+      fileField.value = "";
+      return;
+    }
     if (fileField.files && fileField.files[0]) {
       clearDroppedMedia(droppedDetailMedia, dropStatus, dropClearButton, dropZone, typeField.value);
       clearPastedImage(pastedDetailImage, pastePreview, pasteStatus, pasteClearButton, pastePanel);
@@ -3420,6 +3486,10 @@ function bindDetailComposer(originNode) {
     clearPastedImage(pastedDetailImage, pastePreview, pasteStatus, pasteClearButton, pastePanel);
   });
   addButtonElement.addEventListener("click", async () => {
+    if (hasOversizedMediaFile(typeField.value, fileField, pastedDetailImage, droppedDetailMedia)) {
+      window.alert(getUploadLimitMessage());
+      return;
+    }
     const mediaFile = getMediaFileForType(typeField.value, fileField, pastedDetailImage, droppedDetailMedia);
     const createdNode = await createNodeFromValues({
       type: typeField.value,
@@ -3847,6 +3917,11 @@ clearClipboardImageButton.addEventListener("click", () => {
 addButton.addEventListener("click", addNode);
 addClusterButton.addEventListener("click", addCluster);
 loginButton.addEventListener("click", login);
+loginPasswordInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.isComposing) return;
+  event.preventDefault();
+  login();
+});
 signupButton.addEventListener("click", signup);
 userSummaryButton.addEventListener("click", () => {
   if (currentUser) {
