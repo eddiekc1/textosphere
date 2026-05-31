@@ -4,14 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Textosphere</title>
-    <link rel="stylesheet" href="styles.css?v=20260531-user-delete" />
+    <link rel="stylesheet" href="styles.css?v=20260531-signup-hints" />
   </head>
   <body>
     <section class="auth-shell" id="authShell" hidden>
       <div class="auth-card">
         <div class="brand auth-brand">
-          <!--<div class="brand-mark" aria-hidden="true"></div> -->
-          <button class="brand-mark brand-info-button" id="brandInfoButton" type="button" aria-label="Textosphereについて開く" title="Textosphereについて"></button>
+          <button class="brand-mark brand-info-button" type="button" aria-label="Textosphereについて開く" title="Textosphereについて"></button>
           <div>
             <p class="eyebrow">Outer Space SNS</p>
             <h1>Textosphere</h1>
@@ -30,12 +29,12 @@
             <h2>ユーザー作成</h2>
             <label class="field"><span>メールアドレス</span><input id="signupEmailInput" type="email" autocomplete="email" /></label>
             <label class="field"><span>ユーザー名</span><input id="signupUserNameInput" type="text" placeholder="表示名" maxlength="25" /></label>
-            <label class="field"><span>ユーザーID</span><input id="signupUserIdInput" type="text" autocomplete="off" value="" placeholder="半角英数、_、-" maxlength="25" /></label>
-            <label class="field"><span>パスワード</span><input id="signupPasswordInput" type="password" autocomplete="new-password" maxlength="25" /></label>
+            <label class="field has-tooltip"><span>ユーザーID</span><input id="signupUserIdInput" type="text" autocomplete="off" value="" placeholder="半角英数、_、-" maxlength="25" aria-describedby="signupUserIdHint" title="半角英数字、_、- のみ。1〜25文字。ログインにも使います。" /><small class="field-tooltip" id="signupUserIdHint">半角英数字、_、- のみ。1〜25文字。ログインにも使います。</small></label>
+            <label class="field has-tooltip"><span>パスワード</span><input id="signupPasswordInput" type="password" autocomplete="new-password" maxlength="25" aria-describedby="signupPasswordHint" title="8〜25文字。半角英大文字・小文字・数字・記号（_ - ! # $ % ( ) [ ] @ + * ? /）のうち3種類以上を含めてください。" /><small class="field-tooltip" id="signupPasswordHint">8〜25文字。半角英大文字・小文字・数字・記号（_ - ! # $ % ( ) [ ] @ + * ? /）のうち3種類以上。</small></label>
             <label class="field"><span>生年月日</span><input id="signupBirthDateInput" type="date" /></label>
             <label class="field"><span>プロフィールアイコン</span><input id="signupProfileIconInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" /></label>
             <label class="field"><span>自己紹介文</span><textarea id="signupBioInput" rows="4" placeholder="自己紹介文" maxlength="4000"></textarea></label>
-            <button class="secondary-button" id="signupButton" type="button" disabled>ユーザーを作成</button>
+            <button class="secondary-button" id="signupButton" type="button">ユーザーを作成</button>
           </section>
         </div>
         <p class="auth-message" id="authMessage"></p>
@@ -96,6 +95,10 @@
       </aside>
       <main class="universe" aria-label="情報の星図">
         <canvas id="threadCanvas" aria-hidden="true"></canvas>
+        <div class="home-toolbar">
+          <button class="home-button" id="homeButton" type="button" title="ホームへ移動">ホーム</button>
+          <button class="home-button home-save-button" id="saveHomeButton" type="button" title="この場所をホームにする">この場所をホームにする</button>
+        </div>
         <div class="map-toolbar">
           <button class="icon-button" id="shuffleButton" type="button" title="配置を揺らす" aria-label="配置を揺らす"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /></svg></button>
           <button class="icon-button" id="clearLinksButton" type="button" title="線を消す" aria-label="線を消す"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M7 7l-2 2a4 4 0 0 0 0 6l1 1a4 4 0 0 0 6 0l2-2M10 6l2-2a4 4 0 0 1 6 0l1 1a4 4 0 0 1 0 6l-2 2" /></svg></button>
@@ -317,9 +320,9 @@ Textosphere プライバシーポリシー
     </dialog>
     <dialog class="detail-dialog" id="detailDialog"><div class="dialog-shell"><button class="close-button" id="closeDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="detailType"></div><h2 id="detailTitle"></h2><div class="detail-content" id="detailContent"></div></div></dialog>
     <dialog class="connection-dialog" id="connectionDialog"><div class="connection-shell"><button class="close-button" id="closeConnectionDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="connectionType">接続</div><h2 id="connectionTitle">光点を接続</h2><p class="connection-summary" id="connectionSummary"></p><label class="field"><span>コメント</span><textarea id="connectionCommentInput" rows="4" maxlength="2000" placeholder="接続にコメントを付ける"></textarea></label><div class="connection-actions"><button class="secondary-button" id="cancelConnectionButton" type="button">キャンセル</button><button class="danger-button" id="disconnectConnectionButton" type="button" hidden>接続を切る</button><button class="primary-button" id="confirmConnectionButton" type="button">線で繋ぐ</button></div></div></dialog>
-    <dialog class="profile-dialog" id="profileDialog"><div class="profile-shell"><button class="close-button" id="closeProfileDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type">ユーザー</div><h2>プロフィール編集</h2><label class="field"><span>ユーザー名</span><input id="profileUserNameInput" type="text" placeholder="表示名" maxlength="25" /></label><label class="field"><span>ユーザーID</span><input id="profileUserIdInput" type="text" autocomplete="off" maxlength="25" /></label><label class="field"><span>パスワード</span><input id="profilePasswordInput" type="password" autocomplete="new-password" placeholder="変更する場合のみ入力" maxlength="25" /></label><label class="field"><span>生年月日</span><input id="profileBirthDateInput" type="date" /></label><label class="field"><span>プロフィールアイコン</span><input id="profileIconInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" /></label><label class="field"><span>自己紹介文</span><textarea id="profileBioInput" rows="5" placeholder="自己紹介文" maxlength="4000"></textarea></label><p class="profile-message" id="profileMessage"></p><div class="profile-actions"><button class="secondary-button" id="cancelProfileButton" type="button">キャンセル</button><button class="primary-button" id="saveProfileButton" type="button">保存</button></div></div></dialog>
+    <dialog class="profile-dialog" id="profileDialog"><div class="profile-shell"><button class="close-button" id="closeProfileDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type">ユーザー</div><h2>プロフィール編集</h2><label class="field"><span>ユーザー名</span><input id="profileUserNameInput" type="text" placeholder="表示名" maxlength="25" /></label><label class="field has-tooltip"><span>ユーザーID</span><input id="profileUserIdInput" type="text" autocomplete="off" maxlength="25" aria-describedby="profileUserIdHint" title="半角英数字、_、- のみ。1〜25文字。ログインにも使います。" /><small class="field-tooltip" id="profileUserIdHint">半角英数字、_、- のみ。1〜25文字。ログインにも使います。</small></label><label class="field has-tooltip"><span>パスワード</span><input id="profilePasswordInput" type="password" autocomplete="new-password" placeholder="変更する場合のみ入力" maxlength="25" aria-describedby="profilePasswordHint" title="空欄なら変更しません。変更する場合は8〜25文字で、半角英大文字・小文字・数字・記号（_ - ! # $ % ( ) [ ] @ + * ? /）のうち3種類以上を含めてください。" /><small class="field-tooltip" id="profilePasswordHint">空欄なら変更しません。変更する場合は8〜25文字で、半角英大文字・小文字・数字・記号（_ - ! # $ % ( ) [ ] @ + * ? /）のうち3種類以上。</small></label><label class="field"><span>生年月日</span><input id="profileBirthDateInput" type="date" /></label><label class="field"><span>プロフィールアイコン</span><input id="profileIconInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" /></label><label class="field"><span>自己紹介文</span><textarea id="profileBioInput" rows="5" placeholder="自己紹介文" maxlength="4000"></textarea></label><p class="profile-message" id="profileMessage"></p><div class="profile-actions"><button class="secondary-button" id="cancelProfileButton" type="button">キャンセル</button><button class="primary-button" id="saveProfileButton" type="button">保存</button></div></div></dialog>
     <dialog class="user-detail-dialog" id="userDetailDialog"><div class="user-detail-shell"><button class="close-button" id="closeUserDetailDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="user-detail-content" id="userDetailContent"></div></div></dialog>
     <dialog class="cluster-nodes-dialog" id="clusterNodesDialog"><div class="cluster-nodes-shell"><button class="close-button" id="closeClusterNodesDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="clusterNodesType">クラスタ</div><h2 id="clusterNodesTitle"></h2><p class="cluster-nodes-meta" id="clusterNodesMeta"></p><div class="cluster-nodes-content" id="clusterNodesContent"></div></div></dialog>
-    <script src="app.js?v=20260531-user-delete"></script>
+    <script src="app.js?v=20260531-profile-hints"></script>
   </body>
 </html>

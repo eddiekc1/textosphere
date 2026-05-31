@@ -251,6 +251,21 @@ function toPublicUser(row) {
   };
 }
 
+function toSpaceHome(row) {
+  return row
+    ? {
+        id: row.id,
+        name: row.name || "ホーム",
+        x: Number(row.x),
+        y: Number(row.y),
+        zoom: Number(row.zoom),
+        isPrimary: Boolean(row.is_primary),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }
+    : null;
+}
+
 function canManageOwnedResource(user, ownerUserId) {
   return Number(user.role) <= 2 || ownerUserId === user.id;
 }
@@ -964,6 +979,24 @@ async function initDb() {
     )
   `);
   await pool.query(`
+    create table if not exists user_space_homes (
+      id uuid primary key,
+      user_id uuid not null references users(id) on delete cascade,
+      name text not null default 'ホーム',
+      x numeric(8, 4) not null,
+      y numeric(8, 4) not null,
+      zoom numeric(5, 3) not null default 1,
+      is_primary boolean not null default true,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `);
+  await pool.query(`
+    create unique index if not exists user_space_homes_single_primary
+    on user_space_homes (user_id)
+    where is_primary
+  `);
+  await pool.query(`
     do $$
     declare
       constraint_name text;
@@ -1295,7 +1328,7 @@ app.patch("/api/auth/me", requireAuth, parseMultipartForm, async (req, res, next
 app.get("/api/state", requireAuth, async (req, res, next) => {
   try {
     await ensureUserPublicCluster(req.user.id);
-    const [clusterResult, nodeResult, linkResult, clusterDetailResult, followResult] = await Promise.all([
+    const [clusterResult, nodeResult, linkResult, clusterDetailResult, followResult, homeResult] = await Promise.all([
       pool.query("select * from clusters where owner_user_id = $1 order by created_at asc", [req.user.id]),
       pool.query(
         `
@@ -1342,6 +1375,9 @@ app.get("/api/state", requireAuth, async (req, res, next) => {
         order by clusters.created_at asc
       `),
       pool.query("select cluster_id from cluster_follows where user_id = $1", [req.user.id]),
+      pool.query("select * from user_space_homes where user_id = $1 and is_primary = true order by updated_at desc limit 1", [
+        req.user.id,
+      ]),
     ]);
 
     res.json({
@@ -1349,9 +1385,56 @@ app.get("/api/state", requireAuth, async (req, res, next) => {
       clusters: clusterResult.rows.map(toCluster),
       clusterDirectory: clusterDetailResult.rows.map(toClusterDetail),
       followedClusterIds: followResult.rows.map((row) => row.cluster_id),
+      homeLocation: toSpaceHome(homeResult.rows[0]),
       nodes: nodeResult.rows.map(toNode),
       links: linkResult.rows.map(toLink),
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/space-home", requireAuth, async (req, res, next) => {
+  try {
+    const x = Number(req.body.x);
+    const y = Number(req.body.y);
+    const zoom = Number(req.body.zoom);
+
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(zoom)) {
+      res.status(400).json({ error: "Invalid home location" });
+      return;
+    }
+
+    const safeZoom = clamp(zoom, 0.45, 2.6);
+    const existing = await pool.query(
+      "select id from user_space_homes where user_id = $1 and is_primary = true order by updated_at desc limit 1",
+      [req.user.id],
+    );
+
+    const { rows } =
+      existing.rows.length > 0
+        ? await pool.query(
+            `
+              update user_space_homes
+              set x = $2,
+                  y = $3,
+                  zoom = $4,
+                  updated_at = now()
+              where id = $1
+              returning *
+            `,
+            [existing.rows[0].id, x, y, safeZoom],
+          )
+        : await pool.query(
+            `
+              insert into user_space_homes (id, user_id, name, x, y, zoom, is_primary)
+              values ($1, $2, 'ホーム', $3, $4, $5, true)
+              returning *
+            `,
+            [crypto.randomUUID(), req.user.id, x, y, safeZoom],
+          );
+
+    res.json(toSpaceHome(rows[0]));
   } catch (error) {
     next(error);
   }

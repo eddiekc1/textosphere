@@ -44,6 +44,8 @@ const clusterDescriptionInput = document.querySelector("#clusterDescriptionInput
 const addClusterButton = document.querySelector("#addClusterButton");
 const shuffleButton = document.querySelector("#shuffleButton");
 const clearLinksButton = document.querySelector("#clearLinksButton");
+const homeButton = document.querySelector("#homeButton");
+const saveHomeButton = document.querySelector("#saveHomeButton");
 const nodeCount = document.querySelector("#nodeCount");
 const nodeList = document.querySelector("#nodeList");
 const nodeListTabs = document.querySelectorAll(".node-list-tab");
@@ -99,7 +101,7 @@ const clusterNodesType = document.querySelector("#clusterNodesType");
 const clusterNodesTitle = document.querySelector("#clusterNodesTitle");
 const clusterNodesMeta = document.querySelector("#clusterNodesMeta");
 const clusterNodesContent = document.querySelector("#clusterNodesContent");
-const brandInfoButton = document.querySelector("#brandInfoButton");
+const brandInfoButtons = document.querySelectorAll(".brand-info-button");
 const brandInfoDialog = document.querySelector("#brandInfoDialog");
 const closeBrandInfoDialogButton = document.querySelector("#closeBrandInfoDialogButton");
 const brandInfoTabs = document.querySelectorAll(".brand-info-tab");
@@ -189,6 +191,7 @@ let activeNodeListMode = ["followed", "favorites"].includes(localStorage.getItem
 let activeClusterListMode = localStorage.getItem("textosphereClusterListMode") === "followed" ? "followed" : "own";
 let universePan = { x: 0, y: 0 };
 let universeZoom = 1;
+let currentHomeLocation = null;
 let viewportPositionedNodeIds = new Set();
 let nodePositionRefreshTimer = null;
 let nodePositionAnimationFrame = null;
@@ -724,7 +727,9 @@ function setAuthenticatedView(user) {
 
 function showAuth() {
   currentUser = null;
+  currentHomeLocation = null;
   stopNodePositionRefresh();
+  updateHomeControls();
   shuffleButton.hidden = true;
   appShell.hidden = true;
   authShell.hidden = false;
@@ -951,6 +956,20 @@ function normalizeLink(link) {
   };
 }
 
+function normalizeHomeLocation(home) {
+  if (!home) return null;
+  const x = Number(home.x);
+  const y = Number(home.y);
+  const zoom = Number(home.zoom);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(zoom)) return null;
+  return {
+    ...home,
+    x,
+    y,
+    zoom: clamp(zoom, MIN_UNIVERSE_ZOOM, MAX_UNIVERSE_ZOOM),
+  };
+}
+
 function ensurePublicCluster(items) {
   const normalized = items.map(normalizeCluster);
   if (normalized.some((cluster) => cluster.id === PUBLIC_CLUSTER_ID || cluster.name === "Public")) {
@@ -987,6 +1006,7 @@ async function loadState() {
     searchResultVisibleCount = SEARCH_RESULT_PAGE_SIZE;
     universePan = { x: 0, y: 0 };
     universeZoom = 1;
+    currentHomeLocation = normalizeHomeLocation(state.homeLocation);
     viewportPositionedNodeIds = new Set();
     clusters = ensurePublicCluster(state.clusters || []);
     clusterDirectory = ensurePublicCluster(state.clusterDirectory || state.clusters || []);
@@ -997,14 +1017,83 @@ async function loadState() {
     apiAvailable = true;
   } catch (error) {
     apiAvailable = false;
+    currentHomeLocation = null;
   }
 
   renderAll();
+  if (currentHomeLocation) {
+    moveUniverseToHome();
+  } else {
+    updateHomeControls();
+  }
   requestAnimationFrame(resizeCanvas);
 }
 
 function getMapRect() {
   return nodesLayer.getBoundingClientRect();
+}
+
+function updateHomeControls() {
+  if (!homeButton || !saveHomeButton) return;
+  homeButton.disabled = !currentHomeLocation;
+  homeButton.title = currentHomeLocation ? "ホームへ移動" : "ホームがまだ設定されていません";
+  homeButton.setAttribute("aria-label", homeButton.title);
+}
+
+function getCurrentUniverseLocation() {
+  const rect = getMapRect();
+  const width = rect.width || window.innerWidth || 960;
+  const height = rect.height || window.innerHeight || 640;
+  return {
+    x: ((width / 2 - universePan.x) / universeZoom / width) * 100,
+    y: ((height / 2 - universePan.y) / universeZoom / height) * 100,
+    zoom: universeZoom,
+  };
+}
+
+function moveUniverseToHome() {
+  const home = normalizeHomeLocation(currentHomeLocation);
+  if (!home) {
+    updateHomeControls();
+    return;
+  }
+
+  const rect = getMapRect();
+  const width = rect.width || window.innerWidth || 960;
+  const height = rect.height || window.innerHeight || 640;
+  universeZoom = home.zoom;
+  universePan = {
+    x: width / 2 - (home.x / 100) * width * universeZoom,
+    y: height / 2 - (home.y / 100) * height * universeZoom,
+  };
+  renderNodes();
+  drawLinks();
+  updateHomeControls();
+}
+
+async function saveCurrentHomeLocation() {
+  if (!currentUser || !apiAvailable) return;
+  const previousLabel = saveHomeButton.textContent;
+  saveHomeButton.disabled = true;
+  saveHomeButton.textContent = "保存中";
+
+  try {
+    const result = await apiRequest("/space-home", {
+      method: "PATCH",
+      body: JSON.stringify(getCurrentUniverseLocation()),
+    });
+    currentHomeLocation = normalizeHomeLocation(result);
+    updateHomeControls();
+    saveHomeButton.textContent = "保存しました";
+    setTimeout(() => {
+      saveHomeButton.textContent = previousLabel;
+      saveHomeButton.disabled = false;
+    }, 900);
+  } catch (error) {
+    saveHomeButton.textContent = previousLabel;
+    saveHomeButton.disabled = false;
+    window.alert("ホームを保存できませんでした");
+  }
 }
 
 function getNodeLayoutMetrics() {
@@ -3990,7 +4079,9 @@ userSummaryButton.addEventListener("click", () => {
     openUserDetail(currentUser.id);
   }
 });
-brandInfoButton.addEventListener("click", openBrandInfoDialog);
+brandInfoButtons.forEach((button) => {
+  button.addEventListener("click", openBrandInfoDialog);
+});
 closeBrandInfoDialogButton.addEventListener("click", closeBrandInfoDialog);
 brandInfoTabs.forEach((tab) => {
   tab.addEventListener("click", () => setBrandInfoTab(tab.dataset.brandInfoTab));
@@ -4019,6 +4110,8 @@ clusterListTabs.forEach((tab) => {
 });
 shuffleButton.addEventListener("click", shuffleNodes);
 clearLinksButton.addEventListener("click", clearLinks);
+homeButton.addEventListener("click", moveUniverseToHome);
+saveHomeButton.addEventListener("click", saveCurrentHomeLocation);
 searchTypeInput.addEventListener("change", resetSearchResults);
 searchWordInput.addEventListener("input", resetSearchResults);
 searchSortInput.addEventListener("change", resetSearchResults);
