@@ -180,6 +180,8 @@ let activeDetailNodeId = null;
 let activeSelectionSyncCleanup = null;
 let activeNodeDrag = null;
 let activeUniversePan = null;
+let activeUniversePinch = null;
+const activeUniversePointers = new Map();
 let pendingConnection = null;
 let pendingConnectionDelete = null;
 let suppressNodeClick = false;
@@ -1608,6 +1610,7 @@ function updateSelectedNodeClass(id) {
 }
 
 function startUniversePan(event) {
+  if (activeUniversePinch) return;
   if (event.button !== 0 || event.target.closest(".node")) return;
   event.preventDefault();
   hideLinkCommentTooltip();
@@ -1625,6 +1628,7 @@ function startUniversePan(event) {
 }
 
 function moveUniversePan(event) {
+  if (activeUniversePinch) return;
   if (!activeUniversePan || activeUniversePan.pointerId !== event.pointerId) return;
   event.preventDefault();
   universePan = {
@@ -1642,6 +1646,118 @@ function finishUniversePan(event) {
   nodesLayer.classList.remove("is-panning");
   if (nodesLayer.releasePointerCapture) {
     nodesLayer.releasePointerCapture(event.pointerId);
+  }
+}
+
+function getLayerPoint(clientX, clientY) {
+  const rect = getMapRect();
+  return {
+    x: clientX - rect.left,
+    y: clientY - rect.top,
+  };
+}
+
+function getPinchPointers() {
+  return [...activeUniversePointers.values()]
+    .filter((pointer) => pointer.pointerType === "touch")
+    .sort((first, second) => first.pointerId - second.pointerId)
+    .slice(0, 2);
+}
+
+function getPinchMetrics(pointers) {
+  const [first, second] = pointers;
+  const firstPoint = getLayerPoint(first.clientX, first.clientY);
+  const secondPoint = getLayerPoint(second.clientX, second.clientY);
+  return {
+    centerX: (firstPoint.x + secondPoint.x) / 2,
+    centerY: (firstPoint.y + secondPoint.y) / 2,
+    distance: Math.hypot(secondPoint.x - firstPoint.x, secondPoint.y - firstPoint.y),
+  };
+}
+
+function cancelActiveNodeDragForPinch() {
+  if (!activeNodeDrag) return;
+  activeNodeDrag.button.classList.remove("is-dragging");
+  if (activeNodeDrag.button.releasePointerCapture) {
+    try {
+      activeNodeDrag.button.releasePointerCapture(activeNodeDrag.pointerId);
+    } catch (error) {
+      // The pointer may already have been released by the browser while switching to pinch.
+    }
+  }
+  activeNodeDrag = null;
+}
+
+function startUniversePinch() {
+  const pointers = getPinchPointers();
+  if (pointers.length < 2) return;
+
+  const metrics = getPinchMetrics(pointers);
+  if (metrics.distance <= 0) return;
+
+  hideLinkCommentTooltip();
+  activeUniversePan = null;
+  nodesLayer.classList.remove("is-panning");
+  cancelActiveNodeDragForPinch();
+  activeUniversePinch = {
+    startDistance: metrics.distance,
+    startZoom: universeZoom,
+    worldCenterX: (metrics.centerX - universePan.x) / universeZoom,
+    worldCenterY: (metrics.centerY - universePan.y) / universeZoom,
+  };
+}
+
+function trackUniversePointer(event) {
+  if (event.pointerType !== "touch") return;
+  activeUniversePointers.set(event.pointerId, {
+    pointerId: event.pointerId,
+    pointerType: event.pointerType,
+    clientX: event.clientX,
+    clientY: event.clientY,
+  });
+
+  if (activeUniversePointers.size >= 2) {
+    event.preventDefault();
+    startUniversePinch();
+  }
+}
+
+function moveUniversePinch(event) {
+  if (event.pointerType !== "touch" || !activeUniversePointers.has(event.pointerId)) return;
+  activeUniversePointers.set(event.pointerId, {
+    pointerId: event.pointerId,
+    pointerType: event.pointerType,
+    clientX: event.clientX,
+    clientY: event.clientY,
+  });
+
+  if (!activeUniversePinch) return;
+  const pointers = getPinchPointers();
+  if (pointers.length < 2) return;
+
+  event.preventDefault();
+  const metrics = getPinchMetrics(pointers);
+  const nextZoom = clamp(
+    activeUniversePinch.startZoom * (metrics.distance / activeUniversePinch.startDistance),
+    MIN_UNIVERSE_ZOOM,
+    MAX_UNIVERSE_ZOOM,
+  );
+  universeZoom = nextZoom;
+  universePan = {
+    x: metrics.centerX - activeUniversePinch.worldCenterX * universeZoom,
+    y: metrics.centerY - activeUniversePinch.worldCenterY * universeZoom,
+  };
+  renderNodes();
+  drawLinks();
+}
+
+function finishUniversePointer(event) {
+  if (event.pointerType !== "touch") return;
+  activeUniversePointers.delete(event.pointerId);
+  if (activeUniversePointers.size < 2) {
+    activeUniversePinch = null;
+  } else {
+    startUniversePinch();
   }
 }
 
@@ -1667,6 +1783,11 @@ function handleUniverseWheel(event) {
 }
 
 function startNodeDrag(event, id, button) {
+  if (activeUniversePinch || (event.pointerType === "touch" && activeUniversePointers.size >= 2)) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
   if (event.button !== 0) return;
   event.preventDefault();
   event.stopPropagation();
@@ -1688,6 +1809,7 @@ function startNodeDrag(event, id, button) {
 }
 
 function moveNodeDrag(event) {
+  if (activeUniversePinch) return;
   if (!activeNodeDrag || activeNodeDrag.pointerId !== event.pointerId) return;
   event.preventDefault();
   const distance = Math.hypot(event.clientX - activeNodeDrag.startX, event.clientY - activeNodeDrag.startY);
@@ -4135,6 +4257,10 @@ confirmConnectionButton.addEventListener("click", async () => {
 nodesLayer.addEventListener("pointermove", updateLinkCommentTooltip);
 nodesLayer.addEventListener("pointerleave", hideLinkCommentTooltip);
 nodesLayer.addEventListener("dblclick", handleLinkCommentDoubleClick);
+nodesLayer.addEventListener("pointerdown", trackUniversePointer, { capture: true });
+nodesLayer.addEventListener("pointermove", moveUniversePinch, { capture: true });
+nodesLayer.addEventListener("pointerup", finishUniversePointer, { capture: true });
+nodesLayer.addEventListener("pointercancel", finishUniversePointer, { capture: true });
 nodesLayer.addEventListener("pointerdown", startUniversePan);
 nodesLayer.addEventListener("pointermove", moveUniversePan);
 nodesLayer.addEventListener("pointerup", finishUniversePan);
