@@ -1,5 +1,8 @@
 const crypto = require("node:crypto");
+const { spawn } = require("node:child_process");
+const dns = require("node:dns").promises;
 const fs = require("node:fs");
+const net = require("node:net");
 const path = require("node:path");
 const express = require("express");
 const pg = require("pg");
@@ -54,7 +57,18 @@ const inputLimits = {
   clusterDescription: 1000,
   linkComment: 2000,
 };
+const defaultLinkComment = "link";
 const maxUploadBytes = 30 * 1024 * 1024;
+const maxVideoUploadBytes = 320 * 1024 * 1024;
+const ffmpegPath = process.env.FFMPEG_PATH || "ffmpeg";
+const ffprobePath = process.env.FFPROBE_PATH || "ffprobe";
+const linkPreviewTimeoutMs = 4000;
+const linkPreviewMaxBytes = 256 * 1024;
+const linkPreviewMaxRedirects = 3;
+const linkPreviewCacheTtlMs = 6 * 60 * 60 * 1000;
+const linkPreviewNegativeCacheTtlMs = 10 * 60 * 1000;
+const linkPreviewCacheMaxEntries = 300;
+const linkPreviewCache = new Map();
 
 app.disable("x-powered-by");
 
@@ -79,6 +93,219 @@ function setSecurityHeaders(req, res, next) {
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   next();
+}
+
+function isBlockedIpv4(address) {
+  const parts = address.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+  const [a, b] = parts;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && (b === 0 || b === 168)) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    a >= 224
+  );
+}
+
+function isBlockedIpAddress(address) {
+  const value = String(address || "").toLowerCase();
+  if (!value) return true;
+  if (net.isIP(value) === 4) return isBlockedIpv4(value);
+  const mappedIpv4 = value.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mappedIpv4) return isBlockedIpv4(mappedIpv4[1]);
+  if (net.isIP(value) !== 6) return true;
+  return (
+    value === "::" ||
+    value === "::1" ||
+    value.startsWith("fc") ||
+    value.startsWith("fd") ||
+    /^fe[89ab]/.test(value) ||
+    value.startsWith("ff")
+  );
+}
+
+function parsePreviewUrl(rawUrl) {
+  try {
+    const url = new URL(String(rawUrl || "").trim());
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (!url.hostname || url.username || url.password) return null;
+    url.hash = "";
+    return url;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function assertPublicPreviewUrl(url) {
+  const hostname = url.hostname.toLowerCase();
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) {
+    throw new Error("Blocked private URL");
+  }
+  if (net.isIP(hostname)) {
+    if (isBlockedIpAddress(hostname)) throw new Error("Blocked private URL");
+    return;
+  }
+
+  const addresses = await dns.lookup(hostname, { all: true, verbatim: true });
+  if (addresses.length === 0 || addresses.some((entry) => isBlockedIpAddress(entry.address))) {
+    throw new Error("Blocked private URL");
+  }
+}
+
+function decodeHtmlEntities(value) {
+  const named = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+  const decodeCodePoint = (codePoint) =>
+    Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : "";
+  return String(value || "")
+    .replace(/&#(\d+);/g, (_, code) => decodeCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => decodeCodePoint(Number.parseInt(code, 16)))
+    .replace(/&([a-z]+);/gi, (match, name) => named[name.toLowerCase()] || match)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getHtmlAttribute(tag, name) {
+  const pattern = new RegExp(`${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>` + "`" + `]+))`, "i");
+  const match = tag.match(pattern);
+  return match ? decodeHtmlEntities(match[1] || match[2] || match[3] || "") : "";
+}
+
+function extractMetaTags(html) {
+  const meta = new Map();
+  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const tag = match[0];
+    const key = (getHtmlAttribute(tag, "property") || getHtmlAttribute(tag, "name")).toLowerCase();
+    const content = getHtmlAttribute(tag, "content");
+    if (key && content && !meta.has(key)) meta.set(key, content);
+  }
+  return meta;
+}
+
+function getFirstMeta(meta, names) {
+  for (const name of names) {
+    const value = meta.get(name);
+    if (value) return value;
+  }
+  return "";
+}
+
+async function readLimitedText(response) {
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > linkPreviewMaxBytes) {
+      await reader.cancel();
+      throw new Error("Preview response too large");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+}
+
+async function fetchPreviewHtml(url, redirectCount = 0) {
+  await assertPublicPreviewUrl(url);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), linkPreviewTimeoutMs);
+  try {
+    const response = await fetch(url.href, {
+      redirect: "manual",
+      signal: controller.signal,
+      headers: {
+        Accept: "text/html,application/xhtml+xml",
+        "User-Agent": "TextosphereLinkPreview/1.0",
+      },
+    });
+
+    if (response.status >= 300 && response.status < 400 && response.headers.get("location")) {
+      if (redirectCount >= linkPreviewMaxRedirects) throw new Error("Too many redirects");
+      const nextUrl = parsePreviewUrl(new URL(response.headers.get("location"), url).href);
+      if (!nextUrl) throw new Error("Invalid redirect");
+      return fetchPreviewHtml(nextUrl, redirectCount + 1);
+    }
+
+    if (!response.ok) throw new Error(`Preview fetch failed: ${response.status}`);
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType && !/text\/html|application\/xhtml\+xml/i.test(contentType)) {
+      throw new Error("Preview is not HTML");
+    }
+    const contentLength = Number(response.headers.get("content-length") || 0);
+    if (contentLength > linkPreviewMaxBytes) {
+      throw new Error("Preview response too large");
+    }
+    return { html: await readLimitedText(response), finalUrl: url.href };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function validatePublicImageUrl(rawUrl, baseUrl) {
+  if (!rawUrl) return "";
+  const url = parsePreviewUrl(new URL(rawUrl, baseUrl).href);
+  if (!url) return "";
+  try {
+    await assertPublicPreviewUrl(url);
+    return url.href;
+  } catch (error) {
+    return "";
+  }
+}
+
+async function buildLinkPreview(rawUrl) {
+  const url = parsePreviewUrl(rawUrl);
+  if (!url) return null;
+  const cacheKey = url.href;
+  const cached = linkPreviewCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  linkPreviewCache.delete(cacheKey);
+
+  try {
+    const { html, finalUrl } = await fetchPreviewHtml(url);
+    const meta = extractMetaTags(html);
+    const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+    const title = getFirstMeta(meta, ["og:title", "twitter:title"]) || decodeHtmlEntities(titleMatch?.[1] || "");
+    const description = getFirstMeta(meta, ["og:description", "twitter:description", "description"]);
+    const siteName = getFirstMeta(meta, ["og:site_name"]) || new URL(finalUrl).hostname.replace(/^www\./, "");
+    const image = await validatePublicImageUrl(
+      getFirstMeta(meta, ["og:image", "og:image:url", "twitter:image", "twitter:image:src"]),
+      finalUrl,
+    );
+    const preview = {
+      url: url.href,
+      finalUrl,
+      title: title || siteName || url.href,
+      description,
+      siteName,
+      image,
+    };
+    setLinkPreviewCache(cacheKey, preview, linkPreviewCacheTtlMs);
+    return preview;
+  } catch (error) {
+    setLinkPreviewCache(cacheKey, null, linkPreviewNegativeCacheTtlMs);
+    return null;
+  }
+}
+
+function setLinkPreviewCache(key, value, ttlMs) {
+  if (linkPreviewCache.size >= linkPreviewCacheMaxEntries) {
+    linkPreviewCache.delete(linkPreviewCache.keys().next().value);
+  }
+  linkPreviewCache.set(key, { value, expiresAt: Date.now() + ttlMs });
 }
 
 const seedNodes = [
@@ -209,6 +436,12 @@ function isWithinTextLimit(value, maxLength) {
 
 function sendTextLimitError(res, field, maxLength) {
   res.status(400).json({ error: `${field} must be ${maxLength} characters or fewer` });
+}
+
+function createHttpError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
 }
 
 function hashToken(token) {
@@ -356,7 +589,7 @@ function parseMultipartForm(req, res, next) {
   const chunks = [];
   req.on("data", (chunk) => {
     totalBytes += chunk.length;
-    if (totalBytes > maxUploadBytes) {
+    if (totalBytes > maxVideoUploadBytes) {
       tooLarge = true;
       chunks.length = 0;
       return;
@@ -392,6 +625,9 @@ function parseSelection(value) {
 
 function storeProfileIconFile(file) {
   if (!file) return null;
+  if (file.buffer.length > maxUploadBytes) {
+    throw createHttpError(413, "Upload file is too large");
+  }
 
   const extension = path.extname(file.originalname).toLowerCase();
   const validImage =
@@ -441,6 +677,79 @@ function unlinkUploadedFile(url) {
   const filePath = getUploadFilePathFromUrl(url);
   if (filePath) {
     fs.unlink(filePath, () => {});
+  }
+}
+
+function runMediaTool(command, args, timeoutMs = 10 * 60 * 1000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { windowsHide: true });
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(createHttpError(500, "Video compression timed out"));
+    }, timeoutMs);
+
+    child.stderr.on("data", (chunk) => {
+      stderr = `${stderr}${chunk.toString()}`.slice(-4000);
+    });
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(createHttpError(500, `${path.basename(command)} failed to start: ${error.message}`));
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(createHttpError(500, `Video compression failed${stderr ? `: ${stderr}` : ""}`));
+    });
+  });
+}
+
+async function compressVideoToLow480p(inputPath, outputPath) {
+  await runMediaTool(ffprobePath, [
+    "-v",
+    "error",
+    "-select_streams",
+    "v:0",
+    "-show_entries",
+    "stream=codec_type",
+    "-of",
+    "csv=p=0",
+    inputPath,
+  ], 60 * 1000);
+
+  await runMediaTool(ffmpegPath, [
+    "-y",
+    "-i",
+    inputPath,
+    "-map",
+    "0:v:0",
+    "-map",
+    "0:a?",
+    "-vf",
+    "scale=-2:trunc(min(480\\,ih)/2)*2",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    "-crf",
+    "32",
+    "-pix_fmt",
+    "yuv420p",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "96k",
+    "-movflags",
+    "+faststart",
+    outputPath,
+  ]);
+
+  const stat = fs.statSync(outputPath);
+  if (stat.size <= 0) {
+    throw createHttpError(500, "Video compression produced an empty file");
   }
 }
 
@@ -769,6 +1078,7 @@ async function ensureUserPublicCluster(userId) {
 }
 
 function toLink(row) {
+  const comment = String(row.comment || "").trim() || defaultLinkComment;
   return {
     id: row.id,
     ownerUserId: row.owner_user_id,
@@ -782,7 +1092,7 @@ function toLink(row) {
       : null,
     source: row.source_node_id,
     target: row.target_node_id,
-    comment: row.comment || "",
+    comment,
     createdAt: row.created_at,
   };
 }
@@ -1107,6 +1417,19 @@ app.get("/api/health", async (req, res, next) => {
   try {
     await pool.query("select 1");
     res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/link-preview", requireAuth, async (req, res, next) => {
+  try {
+    const preview = await buildLinkPreview(req.query.url);
+    if (!preview) {
+      res.status(404).json({ error: "Preview unavailable" });
+      return;
+    }
+    res.json(preview);
   } catch (error) {
     next(error);
   }
@@ -1779,6 +2102,7 @@ app.delete("/api/nodes/:id/favorite", requireAuth, async (req, res, next) => {
 
 app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) => {
   let mediaPath = null;
+  let tempMediaPath = null;
   try {
     const userPublicCluster = await ensureUserPublicCluster(req.user.id);
     const {
@@ -1829,13 +2153,35 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
         res.status(400).json({ error: "Image requires PNG/JPG/GIF, music requires MP3, and video requires MP4" });
         return;
       }
+      if (type !== "video" && req.file.buffer.length > maxUploadBytes) {
+        res.status(413).json({ error: "Upload file is too large" });
+        return;
+      }
+      if (type === "video" && req.file.buffer.length > maxVideoUploadBytes) {
+        res.status(413).json({ error: "Upload file is too large" });
+        return;
+      }
 
-      const safeExtension = extension || (type === "image" ? ".png" : type === "music" ? ".mp3" : ".mp4");
-      const storedName = `${crypto.randomUUID()}${safeExtension}`;
-      mediaPath = path.join(uploadDir, storedName);
-      fs.writeFileSync(mediaPath, req.file.buffer);
-      mediaUrl = `/uploads/${storedName}`;
-      mediaMime = req.file.mimetype;
+      if (type === "video") {
+        const fileId = crypto.randomUUID();
+        const tempName = `${fileId}-source.mp4`;
+        const storedName = `${fileId}.mp4`;
+        tempMediaPath = path.join(uploadDir, tempName);
+        mediaPath = path.join(uploadDir, storedName);
+        fs.writeFileSync(tempMediaPath, req.file.buffer);
+        await compressVideoToLow480p(tempMediaPath, mediaPath);
+        fs.unlinkSync(tempMediaPath);
+        tempMediaPath = null;
+        mediaUrl = `/uploads/${storedName}`;
+        mediaMime = "video/mp4";
+      } else {
+        const safeExtension = extension || (type === "image" ? ".png" : ".mp3");
+        const storedName = `${crypto.randomUUID()}${safeExtension}`;
+        mediaPath = path.join(uploadDir, storedName);
+        fs.writeFileSync(mediaPath, req.file.buffer);
+        mediaUrl = `/uploads/${storedName}`;
+        mediaMime = req.file.mimetype;
+      }
       mediaName = req.file.originalname;
     }
 
@@ -1887,6 +2233,9 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
 
     res.status(201).json((await getNodeForResponse(rows[0].id, req.user.id)) || toNode(rows[0]));
   } catch (error) {
+    if (tempMediaPath) {
+      fs.unlink(tempMediaPath, () => {});
+    }
     if (mediaPath) {
       fs.unlink(mediaPath, () => {});
     }
@@ -1985,7 +2334,7 @@ app.delete("/api/nodes/:id", requireAuth, async (req, res, next) => {
 app.post("/api/links", requireAuth, async (req, res, next) => {
   try {
     const { source, target, comment = "" } = req.body;
-    const safeComment = String(comment || "").trim();
+    const safeComment = String(comment || "").trim() || defaultLinkComment;
     if (!source || !target || source === target) {
       res.status(400).json({ error: "Invalid link" });
       return;
@@ -2348,6 +2697,13 @@ function startMegaClusterGravity() {
 app.use((error, req, res, next) => {
   if (error.type === "entity.too.large") {
     res.status(413).json({ error: "Request body is too large" });
+    return;
+  }
+  if (error.statusCode) {
+    res.status(error.statusCode).json({
+      error: error.message || "Request failed",
+      detail: process.env.NODE_ENV === "production" ? undefined : error.detail,
+    });
     return;
   }
   console.error(error);

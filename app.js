@@ -1,4 +1,7 @@
 const nodesLayer = document.querySelector("#nodesLayer");
+const temporaryNodeBin = document.querySelector("#temporaryNodeBin");
+const temporaryNodeList = document.querySelector("#temporaryNodeList");
+const temporaryNodeCount = document.querySelector("#temporaryNodeCount");
 const appShell = document.querySelector("#appShell");
 const authShell = document.querySelector("#authShell");
 const authMessage = document.querySelector("#authMessage");
@@ -119,8 +122,11 @@ const INPUT_LIMITS = {
   clusterDescription: 1000,
   linkComment: 2000,
 };
+const DEFAULT_LINK_COMMENT = "link";
 const MAX_UPLOAD_BYTES = 30 * 1024 * 1024;
 const MAX_UPLOAD_MB = 30;
+const MAX_VIDEO_UPLOAD_BYTES = 320 * 1024 * 1024;
+const MAX_VIDEO_UPLOAD_MB = 320;
 
 const labels = {
   text: "\u30c6\u30ad\u30b9\u30c8",
@@ -144,8 +150,10 @@ const typeMeta = {
 
 const NODE_LIST_PAGE_SIZE = 20;
 const SEARCH_RESULT_PAGE_SIZE = 20;
+const TEMPORARY_NODE_LIMIT = 5;
 const MIN_UNIVERSE_ZOOM = 0.45;
 const MAX_UNIVERSE_ZOOM = 2.6;
+const STATE_REFRESH_MS = 30_000;
 const NODE_POSITION_REFRESH_MS = 20_000;
 const NODE_POSITION_ANIMATION_MS = 1_800;
 const NODE_DRAG_MIN_X = -220;
@@ -179,6 +187,7 @@ let selectedNodeId = null;
 let activeDetailNodeId = null;
 let activeSelectionSyncCleanup = null;
 let activeNodeDrag = null;
+let activeTemporaryNodeDrag = null;
 let activeUniversePan = null;
 let activeUniversePinch = null;
 const activeUniversePointers = new Map();
@@ -195,6 +204,8 @@ let universePan = { x: 0, y: 0 };
 let universeZoom = 1;
 let currentHomeLocation = null;
 let viewportPositionedNodeIds = new Set();
+let stateRefreshTimer = null;
+let stateRefreshInFlight = false;
 let nodePositionRefreshTimer = null;
 let nodePositionAnimationFrame = null;
 let authToken = localStorage.getItem("textosphereToken") || "";
@@ -248,6 +259,8 @@ let links = [
 ];
 let hiddenLinks = null;
 let linkCommentHitboxes = [];
+const temporaryNodeIds = new Set();
+const linkPreviewCache = new Map();
 const musicArtworkCache = new Map();
 const IMAGE_CLIPBOARD_TYPES = new Set(["image/png", "image/jpeg", "image/gif"]);
 const IMAGE_CLIPBOARD_EXTENSIONS = {
@@ -274,12 +287,18 @@ function getClipboardImageFile(event) {
   return new File([blob], `clipboard-image-${Date.now()}${extension}`, { type: blob.type });
 }
 
-function isFileWithinUploadLimit(file) {
-  return !file || file.size <= MAX_UPLOAD_BYTES;
+function getUploadLimitForType(type) {
+  return type === "video"
+    ? { bytes: MAX_VIDEO_UPLOAD_BYTES, mb: MAX_VIDEO_UPLOAD_MB }
+    : { bytes: MAX_UPLOAD_BYTES, mb: MAX_UPLOAD_MB };
 }
 
-function getUploadLimitMessage() {
-  return `ファイルサイズは${MAX_UPLOAD_MB}MB以下にしてください`;
+function isFileWithinUploadLimit(file, type = "") {
+  return !file || file.size <= getUploadLimitForType(type).bytes;
+}
+
+function getUploadLimitMessage(type = "") {
+  return `ファイルサイズは${getUploadLimitForType(type).mb}MB以下にしてください`;
 }
 
 function clearPastedImage(state, previewElement, statusElement, clearButtonElement, panelElement) {
@@ -426,10 +445,10 @@ function handleMediaFileDrop(
     return false;
   }
 
-  if (!isFileWithinUploadLimit(file)) {
+  if (!isFileWithinUploadLimit(file, type)) {
     clearDroppedMedia(state, statusElement, clearButtonElement, dropZoneElement, type);
     dropZoneElement.classList.add("is-invalid");
-    statusElement.textContent = getUploadLimitMessage();
+    statusElement.textContent = getUploadLimitMessage(type);
     return false;
   }
 
@@ -497,8 +516,8 @@ function getMediaFileForType(type, fileInputElement, pastedImageState, droppedMe
   if (type === "text") return null;
   const selectedFile = fileInputElement.files ? fileInputElement.files[0] : null;
   const file = selectedFile || droppedMediaState?.file || (type === "image" ? pastedImageState.file : null);
-  if (!isFileWithinUploadLimit(file)) {
-    window.alert(getUploadLimitMessage());
+  if (!isFileWithinUploadLimit(file, type)) {
+    window.alert(getUploadLimitMessage(type));
     return null;
   }
   return file;
@@ -508,7 +527,7 @@ function hasOversizedMediaFile(type, fileInputElement, pastedImageState, dropped
   if (type === "text") return false;
   const selectedFile = fileInputElement.files ? fileInputElement.files[0] : null;
   const file = selectedFile || droppedMediaState?.file || (type === "image" ? pastedImageState.file : null);
-  return !!file && !isFileWithinUploadLimit(file);
+  return !!file && !isFileWithinUploadLimit(file, type);
 }
 
 function escapeHtml(value) {
@@ -631,10 +650,77 @@ function renderYouTubeEmbeds(value) {
   `;
 }
 
+function getFirstTextUrl(value) {
+  return getTextUrls(value)[0] || "";
+}
+
+function renderLinkPreviewCard(value) {
+  const url = getFirstTextUrl(value);
+  if (!url) return "";
+
+  return `
+    <a class="link-preview-card is-loading" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" data-link-preview-url="${escapeHtml(url)}">
+      <span class="link-preview-image" aria-hidden="true"></span>
+      <span class="link-preview-main">
+        <span class="link-preview-site">${escapeHtml(new URL(url).hostname.replace(/^www\./, ""))}</span>
+        <span class="link-preview-title">リンクプレビューを取得中</span>
+        <span class="link-preview-description">${escapeHtml(url)}</span>
+      </span>
+    </a>
+  `;
+}
+
+function renderLinkPreviewContent(preview) {
+  const imageUrl = getSafeResourceUrl(preview.image, { allowRelative: false, allowBlob: false });
+  const finalUrl = getSafeResourceUrl(preview.finalUrl || preview.url, { allowRelative: false, allowBlob: false });
+  const title = String(preview.title || finalUrl || "リンク").trim();
+  const description = String(preview.description || "").trim();
+  const siteName = String(preview.siteName || (finalUrl ? new URL(finalUrl).hostname.replace(/^www\./, "") : "")).trim();
+  return `
+    <span class="link-preview-image ${imageUrl ? "has-image" : ""}" aria-hidden="true">
+      ${imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" />` : ""}
+    </span>
+    <span class="link-preview-main">
+      ${siteName ? `<span class="link-preview-site">${escapeHtml(siteName)}</span>` : ""}
+      <span class="link-preview-title">${escapeHtml(title)}</span>
+      ${description ? `<span class="link-preview-description">${escapeHtml(description)}</span>` : ""}
+    </span>
+  `;
+}
+
+async function loadLinkPreviews(container) {
+  const cards = Array.from(container.querySelectorAll(".link-preview-card[data-link-preview-url]"));
+  await Promise.all(
+    cards.map(async (card) => {
+      const url = card.dataset.linkPreviewUrl;
+      if (!url) return;
+      try {
+        if (!linkPreviewCache.has(url)) {
+          linkPreviewCache.set(url, apiRequest(`/link-preview?url=${encodeURIComponent(url)}`).catch(() => null));
+        }
+        const preview = await linkPreviewCache.get(url);
+        if (!preview || !card.isConnected) {
+          if (!preview) linkPreviewCache.delete(url);
+          card.remove();
+          return;
+        }
+        const href = getSafeResourceUrl(preview.finalUrl || preview.url, { allowRelative: false, allowBlob: false });
+        if (href) card.href = href;
+        card.classList.remove("is-loading");
+        card.innerHTML = renderLinkPreviewContent(preview);
+      } catch (error) {
+        linkPreviewCache.delete(url);
+        card.remove();
+      }
+    }),
+  );
+}
+
 function renderDetailBody(value, attributes = "") {
   const attributeText = attributes ? ` ${attributes}` : "";
   return `
     <p class="detail-text"${attributeText}>${linkifyText(value)}</p>
+    ${renderLinkPreviewCard(value)}
     ${renderYouTubeEmbeds(value)}
   `;
 }
@@ -708,6 +794,7 @@ function setAuthenticatedView(user) {
   currentUser = user;
   authShell.hidden = true;
   appShell.hidden = false;
+  startStateRefresh();
   startNodePositionRefresh();
   shuffleButton.hidden = Number(user.role) !== 1;
   currentUserId.textContent = getUserName(user);
@@ -730,6 +817,7 @@ function setAuthenticatedView(user) {
 function showAuth() {
   currentUser = null;
   currentHomeLocation = null;
+  stopStateRefresh();
   stopNodePositionRefresh();
   updateHomeControls();
   shuffleButton.hidden = true;
@@ -743,6 +831,8 @@ function showAuth() {
 function clearAuth() {
   authToken = "";
   localStorage.removeItem("textosphereToken");
+  temporaryNodeIds.clear();
+  renderTemporaryNodeBin();
   if (profileDialog.open) {
     closeProfileDialog();
   }
@@ -948,12 +1038,13 @@ function normalizeCluster(cluster) {
 }
 
 function normalizeLink(link) {
+  const comment = String(link.comment || "").trim() || DEFAULT_LINK_COMMENT;
   return {
     source: link.source,
     target: link.target,
     ownerUserId: link.ownerUserId || null,
     ownerUser: link.ownerUser || null,
-    comment: link.comment || "",
+    comment,
     createdAt: link.createdAt || new Date().toISOString(),
   };
 }
@@ -1016,6 +1107,7 @@ async function loadState() {
     nodes = state.nodes.map(normalizeNode);
     links = state.links.map(normalizeLink);
     hiddenLinks = null;
+    temporaryNodeIds.clear();
     apiAvailable = true;
   } catch (error) {
     apiAvailable = false;
@@ -1029,6 +1121,86 @@ async function loadState() {
     updateHomeControls();
   }
   requestAnimationFrame(resizeCanvas);
+}
+
+function applyRemoteState(state) {
+  const nextNodes = (state.nodes || []).map(normalizeNode);
+  const nextLinks = (state.links || []).map(normalizeLink);
+  const nextNodeIds = new Set(nextNodes.map((node) => node.id));
+  const keepLinksHidden = hiddenLinks !== null;
+
+  if (state.currentUser) {
+    setAuthenticatedView(state.currentUser);
+  }
+  currentHomeLocation = normalizeHomeLocation(state.homeLocation);
+  clusters = ensurePublicCluster(state.clusters || []);
+  clusterDirectory = ensurePublicCluster(state.clusterDirectory || state.clusters || []);
+  followedClusterIds = new Set(state.followedClusterIds || []);
+  nodes = nextNodes;
+
+  if (keepLinksHidden) {
+    links = [];
+    hiddenLinks = nextLinks.length > 0 ? nextLinks : null;
+  } else {
+    links = nextLinks;
+    hiddenLinks = null;
+  }
+
+  [...temporaryNodeIds].forEach((id) => {
+    if (!nextNodeIds.has(id)) {
+      temporaryNodeIds.delete(id);
+    }
+  });
+  if (selectedNodeId && !nextNodeIds.has(selectedNodeId)) {
+    selectedNodeId = null;
+  }
+  if (activeDetailNodeId && !nextNodeIds.has(activeDetailNodeId)) {
+    activeDetailNodeId = null;
+  }
+
+  apiAvailable = true;
+  renderAll();
+  updateHomeControls();
+  requestAnimationFrame(resizeCanvas);
+}
+
+async function refreshStateFromServer() {
+  if (
+    !currentUser ||
+    !apiAvailable ||
+    stateRefreshInFlight ||
+    activeNodeDrag ||
+    activeTemporaryNodeDrag ||
+    activeUniversePan ||
+    activeUniversePinch ||
+    pendingConnection
+  ) {
+    return;
+  }
+  stateRefreshInFlight = true;
+  try {
+    const state = await apiRequest("/state");
+    applyRemoteState(state);
+  } catch (error) {
+    if (error.status !== 401) {
+      console.warn("State refresh failed", error);
+    }
+  } finally {
+    stateRefreshInFlight = false;
+  }
+}
+
+function startStateRefresh() {
+  if (stateRefreshTimer !== null) return;
+  stateRefreshTimer = setInterval(refreshStateFromServer, STATE_REFRESH_MS);
+}
+
+function stopStateRefresh() {
+  if (stateRefreshTimer !== null) {
+    clearInterval(stateRefreshTimer);
+    stateRefreshTimer = null;
+  }
+  stateRefreshInFlight = false;
 }
 
 function getMapRect() {
@@ -1584,6 +1756,112 @@ function getPointerMapPosition(event) {
   };
 }
 
+function isPointInElement(clientX, clientY, element) {
+  if (!element) return false;
+  const rect = element.getBoundingClientRect();
+  return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+}
+
+function isPointerInTemporaryNodeBin(event) {
+  return isPointInElement(event.clientX, event.clientY, temporaryNodeBin);
+}
+
+function isPointerInUniverse(event) {
+  return isPointInElement(event.clientX, event.clientY, nodesLayer);
+}
+
+function setTemporaryBinDropActive(active) {
+  if (!temporaryNodeBin) return;
+  temporaryNodeBin.classList.toggle("is-drop-target", Boolean(active));
+}
+
+function createTemporaryNodeGhost(node, clientX, clientY) {
+  const ghost = document.createElement("div");
+  ghost.className = "temporary-node-drag-ghost";
+  ghost.style.setProperty("--node-color", typeMeta[node.type].color);
+  ghost.innerHTML = `
+    <span class="temporary-node-dot" aria-hidden="true">${typeMeta[node.type].glyph}</span>
+    <span>${escapeHtml(node.title)}</span>
+  `;
+  document.body.appendChild(ghost);
+  moveTemporaryNodeGhost(ghost, clientX, clientY);
+  return ghost;
+}
+
+function moveTemporaryNodeGhost(ghost, clientX, clientY) {
+  ghost.style.left = `${clientX}px`;
+  ghost.style.top = `${clientY}px`;
+}
+
+function renderTemporaryNodeBin() {
+  if (!temporaryNodeBin || !temporaryNodeList || !temporaryNodeCount) return;
+  const items = [...temporaryNodeIds]
+    .map((id) => nodes.find((node) => node.id === id))
+    .filter(Boolean);
+  temporaryNodeIds.clear();
+  items.forEach((node) => temporaryNodeIds.add(node.id));
+  temporaryNodeCount.textContent = `${items.length}/${TEMPORARY_NODE_LIMIT}`;
+  temporaryNodeBin.classList.toggle("has-items", items.length > 0);
+  temporaryNodeList.innerHTML = items.length
+    ? ""
+    : `<p class="temporary-node-empty">空</p>`;
+
+  items.forEach((node) => {
+    const item = document.createElement("div");
+    item.className = "temporary-node-item";
+    item.tabIndex = 0;
+    item.setAttribute("role", "button");
+    item.setAttribute("aria-label", `${node.title}を一時領域から取り出す`);
+    item.dataset.nodeId = node.id;
+    item.style.setProperty("--node-color", typeMeta[node.type].color);
+    item.innerHTML = `
+      <span class="temporary-node-dot" aria-hidden="true">${typeMeta[node.type].glyph}</span>
+      <span class="temporary-node-title">${escapeHtml(node.title)}</span>
+      <button class="temporary-node-restore" type="button">元に戻す</button>
+    `;
+    item.addEventListener("click", () => {
+      selectedNodeId = node.id;
+      updateSelectedNodeClass(node.id);
+    });
+    item.addEventListener("dblclick", () => openDetail(node.id));
+    item.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      selectedNodeId = node.id;
+      updateSelectedNodeClass(node.id);
+    });
+    item.querySelector(".temporary-node-restore").addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      removeNodeFromTemporaryBin(node.id);
+    });
+    item.addEventListener("pointerdown", (event) => {
+      if (event.target.closest(".temporary-node-restore")) return;
+      startTemporaryNodeDrag(event, node.id, item);
+    });
+    item.addEventListener("pointermove", moveTemporaryNodeDrag);
+    item.addEventListener("pointerup", finishTemporaryNodeDrag);
+    item.addEventListener("pointercancel", cancelTemporaryNodeDrag);
+    temporaryNodeList.appendChild(item);
+  });
+}
+
+function addNodeToTemporaryBin(id) {
+  if (!id) return false;
+  if (!temporaryNodeIds.has(id) && temporaryNodeIds.size >= TEMPORARY_NODE_LIMIT) {
+    window.alert(`一時領域に保管できる光点は${TEMPORARY_NODE_LIMIT}つまでです。`);
+    return false;
+  }
+  temporaryNodeIds.add(id);
+  renderTemporaryNodeBin();
+  return true;
+}
+
+function removeNodeFromTemporaryBin(id) {
+  temporaryNodeIds.delete(id);
+  renderTemporaryNodeBin();
+}
+
 function setNodePosition(id, x, y, button) {
   nodes = nodes.map((node) => (node.id === id ? { ...node, x, y } : node));
   if (button) {
@@ -1792,6 +2070,8 @@ function startNodeDrag(event, id, button) {
   event.preventDefault();
   event.stopPropagation();
   materializeNodePositionForDrag(id);
+  const node = nodes.find((item) => item.id === id);
+  if (!node) return;
   selectedNodeId = id;
   updateSelectedNodeClass(id);
   activeNodeDrag = {
@@ -1800,6 +2080,8 @@ function startNodeDrag(event, id, button) {
     pointerId: event.pointerId,
     startX: event.clientX,
     startY: event.clientY,
+    originalX: node.x,
+    originalY: node.y,
     moved: false,
   };
   button.classList.add("is-dragging");
@@ -1818,6 +2100,7 @@ function moveNodeDrag(event) {
   }
   const position = getPointerMapPosition(event);
   setNodePosition(activeNodeDrag.id, position.x, position.y, activeNodeDrag.button);
+  setTemporaryBinDropActive(isPointerInTemporaryNodeBin(event));
 }
 
 async function persistNodePosition(id) {
@@ -1951,12 +2234,21 @@ function finishNodeDrag(event) {
   event.preventDefault();
   const drag = activeNodeDrag;
   activeNodeDrag = null;
+  setTemporaryBinDropActive(false);
   drag.button.classList.remove("is-dragging");
   if (drag.button.releasePointerCapture) {
     drag.button.releasePointerCapture(event.pointerId);
   }
   if (drag.moved) {
     suppressNodeClick = true;
+    if (isPointerInTemporaryNodeBin(event)) {
+      if (addNodeToTemporaryBin(drag.id)) {
+        setNodePosition(drag.id, drag.originalX, drag.originalY, drag.button);
+      } else {
+        persistNodePosition(drag.id);
+      }
+      return;
+    }
     persistNodePosition(drag.id);
     const nearbyNode = findNearbyNodeForConnection(drag.id);
     const draggedNode = nodes.find((node) => node.id === drag.id);
@@ -1969,7 +2261,75 @@ function finishNodeDrag(event) {
 function cancelNodeDrag(event) {
   if (!activeNodeDrag || activeNodeDrag.pointerId !== event.pointerId) return;
   activeNodeDrag.button.classList.remove("is-dragging");
+  setTemporaryBinDropActive(false);
   activeNodeDrag = null;
+}
+
+function startTemporaryNodeDrag(event, id, item) {
+  if (event.button !== 0) return;
+  const node = nodes.find((candidate) => candidate.id === id);
+  if (!node) return;
+  event.preventDefault();
+  event.stopPropagation();
+  selectedNodeId = id;
+  updateSelectedNodeClass(id);
+  activeTemporaryNodeDrag = {
+    id,
+    item,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    moved: false,
+    ghost: createTemporaryNodeGhost(node, event.clientX, event.clientY),
+  };
+  item.classList.add("is-dragging");
+  if (item.setPointerCapture) {
+    item.setPointerCapture(event.pointerId);
+  }
+}
+
+function moveTemporaryNodeDrag(event) {
+  if (!activeTemporaryNodeDrag || activeTemporaryNodeDrag.pointerId !== event.pointerId) return;
+  event.preventDefault();
+  const distance = Math.hypot(event.clientX - activeTemporaryNodeDrag.startX, event.clientY - activeTemporaryNodeDrag.startY);
+  if (distance > 3) {
+    activeTemporaryNodeDrag.moved = true;
+  }
+  moveTemporaryNodeGhost(activeTemporaryNodeDrag.ghost, event.clientX, event.clientY);
+  setTemporaryBinDropActive(isPointerInTemporaryNodeBin(event));
+}
+
+function finishTemporaryNodeDrag(event) {
+  if (!activeTemporaryNodeDrag || activeTemporaryNodeDrag.pointerId !== event.pointerId) return;
+  event.preventDefault();
+  const drag = activeTemporaryNodeDrag;
+  activeTemporaryNodeDrag = null;
+  drag.item.classList.remove("is-dragging");
+  drag.ghost.remove();
+  setTemporaryBinDropActive(false);
+  if (drag.item.releasePointerCapture) {
+    drag.item.releasePointerCapture(event.pointerId);
+  }
+  if (!drag.moved || isPointerInTemporaryNodeBin(event) || !isPointerInUniverse(event)) return;
+
+  const position = getPointerMapPosition(event);
+  setNodePosition(drag.id, position.x, position.y);
+  removeNodeFromTemporaryBin(drag.id);
+  renderNodes();
+  persistNodePosition(drag.id);
+  const nearbyNode = findNearbyNodeForConnection(drag.id);
+  const draggedNode = nodes.find((node) => node.id === drag.id);
+  if (nearbyNode && draggedNode) {
+    openConnectionDialog(nearbyNode, draggedNode);
+  }
+}
+
+function cancelTemporaryNodeDrag(event) {
+  if (!activeTemporaryNodeDrag || activeTemporaryNodeDrag.pointerId !== event.pointerId) return;
+  activeTemporaryNodeDrag.item.classList.remove("is-dragging");
+  activeTemporaryNodeDrag.ghost.remove();
+  setTemporaryBinDropActive(false);
+  activeTemporaryNodeDrag = null;
 }
 
 function renderNodeList() {
@@ -2413,6 +2773,7 @@ async function deleteNode(id) {
   }
 
   nodes = nodes.filter((node) => node.id !== id);
+  temporaryNodeIds.delete(id);
   pruneLinksForNode(id);
   if (selectedNodeId === id) {
     selectedNodeId = null;
@@ -2428,6 +2789,7 @@ function renderAll() {
   renderClusterList();
   renderClusterOptions();
   renderStats();
+  renderTemporaryNodeBin();
   updateClearLinksButton();
   drawLinks();
 }
@@ -2495,7 +2857,9 @@ async function refreshNodePositionsFromServer() {
     const result = await apiRequest("/nodes/positions");
     animateNodePositionSnapshot(result?.nodes || []);
   } catch (error) {
-    apiAvailable = false;
+    if (error.status !== 401) {
+      console.warn("Node position refresh failed", error);
+    }
   }
 }
 
@@ -2610,7 +2974,7 @@ async function createNodeFromValues({ type, title, body, duration, mediaFile, cl
 
 async function addNode() {
   if (hasOversizedMediaFile(typeInput.value, mediaFileInput, pastedComposerImage, droppedComposerMedia)) {
-    window.alert(getUploadLimitMessage());
+    window.alert(getUploadLimitMessage(typeInput.value));
     return;
   }
   const mediaFile = getMediaFileForType(typeInput.value, mediaFileInput, pastedComposerImage, droppedComposerMedia);
@@ -2687,7 +3051,7 @@ async function createLinkBetween(source, target, comment = "") {
       (link.source === target && link.target === source),
   );
 
-  const safeComment = String(comment || "").trim();
+  const safeComment = String(comment || "").trim() || DEFAULT_LINK_COMMENT;
   if (exists) {
     const existingLink = currentLinks.find(
       (link) =>
@@ -2819,8 +3183,8 @@ function updateTypeFields() {
 
 function updateDurationFromMediaFile() {
   const file = mediaFileInput.files ? mediaFileInput.files[0] : null;
-  if (file && !isFileWithinUploadLimit(file)) {
-    window.alert(getUploadLimitMessage());
+  if (file && !isFileWithinUploadLimit(file, typeInput.value)) {
+    window.alert(getUploadLimitMessage(typeInput.value));
     mediaFileInput.value = "";
     return;
   }
@@ -3725,8 +4089,8 @@ function bindDetailComposer(originNode) {
     updateDetailMediaFields();
   });
   fileField.addEventListener("change", () => {
-    if (fileField.files && fileField.files[0] && !isFileWithinUploadLimit(fileField.files[0])) {
-      window.alert(getUploadLimitMessage());
+    if (fileField.files && fileField.files[0] && !isFileWithinUploadLimit(fileField.files[0], typeField.value)) {
+      window.alert(getUploadLimitMessage(typeField.value));
       fileField.value = "";
       return;
     }
@@ -3760,7 +4124,7 @@ function bindDetailComposer(originNode) {
   });
   addButtonElement.addEventListener("click", async () => {
     if (hasOversizedMediaFile(typeField.value, fileField, pastedDetailImage, droppedDetailMedia)) {
-      window.alert(getUploadLimitMessage());
+      window.alert(getUploadLimitMessage(typeField.value));
       return;
     }
     const mediaFile = getMediaFileForType(typeField.value, fileField, pastedDetailImage, droppedDetailMedia);
@@ -4101,6 +4465,7 @@ function openDetail(id) {
   bindNodeFavoriteAction(node);
   bindDeleteNodeAction(node);
   bindRelationNodeCards();
+  loadLinkPreviews(detailContent);
   bindMusicArtwork(node);
   if (activeSelectionSyncCleanup) {
     activeSelectionSyncCleanup();
@@ -4267,6 +4632,12 @@ nodesLayer.addEventListener("pointerup", finishUniversePan);
 nodesLayer.addEventListener("pointercancel", finishUniversePan);
 nodesLayer.addEventListener("wheel", handleUniverseWheel, { passive: false });
 window.addEventListener("resize", resizeCanvas);
+window.addEventListener("focus", refreshStateFromServer);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    refreshStateFromServer();
+  }
+});
 detailDialog.addEventListener("close", stopDetailPlayback);
 
 setSearchSidebarCollapsed(localStorage.getItem("textosphereSearchCollapsed") === "1");
