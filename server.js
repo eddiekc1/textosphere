@@ -59,7 +59,7 @@ const inputLimits = {
 };
 const defaultLinkComment = "link";
 const maxUploadBytes = 30 * 1024 * 1024;
-const maxVideoUploadBytes = 320 * 1024 * 1024;
+const maxVideoUploadBytes = 80 * 1024 * 1024;
 const ffmpegPath = process.env.FFMPEG_PATH || "ffmpeg";
 const ffprobePath = process.env.FFPROBE_PATH || "ffprobe";
 const linkPreviewTimeoutMs = 4000;
@@ -735,7 +735,7 @@ async function compressVideoToLow480p(inputPath, outputPath) {
     "-preset",
     "veryfast",
     "-crf",
-    "32",
+    "23",
     "-pix_fmt",
     "yuv420p",
     "-c:a",

@@ -104,6 +104,8 @@ const clusterNodesType = document.querySelector("#clusterNodesType");
 const clusterNodesTitle = document.querySelector("#clusterNodesTitle");
 const clusterNodesMeta = document.querySelector("#clusterNodesMeta");
 const clusterNodesContent = document.querySelector("#clusterNodesContent");
+const nodeProcessingDialog = document.querySelector("#nodeProcessingDialog");
+const nodeProcessingMessage = document.querySelector("#nodeProcessingMessage");
 const brandInfoButtons = document.querySelectorAll(".brand-info-button");
 const brandInfoDialog = document.querySelector("#brandInfoDialog");
 const closeBrandInfoDialogButton = document.querySelector("#closeBrandInfoDialogButton");
@@ -125,8 +127,8 @@ const INPUT_LIMITS = {
 const DEFAULT_LINK_COMMENT = "link";
 const MAX_UPLOAD_BYTES = 30 * 1024 * 1024;
 const MAX_UPLOAD_MB = 30;
-const MAX_VIDEO_UPLOAD_BYTES = 320 * 1024 * 1024;
-const MAX_VIDEO_UPLOAD_MB = 320;
+const MAX_VIDEO_UPLOAD_BYTES = 80 * 1024 * 1024;
+const MAX_VIDEO_UPLOAD_MB = 80;
 
 const labels = {
   text: "\u30c6\u30ad\u30b9\u30c8",
@@ -200,6 +202,7 @@ let activeNodeListMode = ["followed", "favorites"].includes(localStorage.getItem
   ? localStorage.getItem("textosphereNodeListMode")
   : "own";
 let activeClusterListMode = localStorage.getItem("textosphereClusterListMode") === "followed" ? "followed" : "own";
+let isNodeSubmissionPending = false;
 let universePan = { x: 0, y: 0 };
 let universeZoom = 1;
 let currentHomeLocation = null;
@@ -831,6 +834,7 @@ function showAuth() {
 function clearAuth() {
   authToken = "";
   localStorage.removeItem("textosphereToken");
+  setNodeSubmissionPending(false);
   temporaryNodeIds.clear();
   renderTemporaryNodeBin();
   if (profileDialog.open) {
@@ -840,6 +844,34 @@ function clearAuth() {
     closeUserDetailDialog();
   }
   showAuth();
+}
+
+function updateNodeSubmissionControls() {
+  addButton.disabled = isNodeSubmissionPending;
+  composerToggle.disabled = isNodeSubmissionPending;
+  document.querySelectorAll(".detailComposerAdd, .detailComposerToggle").forEach((button) => {
+    button.disabled = isNodeSubmissionPending;
+  });
+}
+
+function setNodeSubmissionPending(pending, message = "") {
+  isNodeSubmissionPending = Boolean(pending);
+  if (nodeProcessingMessage && message) {
+    nodeProcessingMessage.textContent = message;
+  }
+  updateNodeSubmissionControls();
+  if (!nodeProcessingDialog) return;
+
+  if (isNodeSubmissionPending) {
+    if (!nodeProcessingDialog.open) {
+      nodeProcessingDialog.showModal();
+    }
+    return;
+  }
+
+  if (nodeProcessingDialog.open) {
+    nodeProcessingDialog.close();
+  }
 }
 
 function canManageOwner(ownerUserId) {
@@ -2973,28 +3005,34 @@ async function createNodeFromValues({ type, title, body, duration, mediaFile, cl
 }
 
 async function addNode() {
+  if (isNodeSubmissionPending) return;
   if (hasOversizedMediaFile(typeInput.value, mediaFileInput, pastedComposerImage, droppedComposerMedia)) {
     window.alert(getUploadLimitMessage(typeInput.value));
     return;
   }
   const mediaFile = getMediaFileForType(typeInput.value, mediaFileInput, pastedComposerImage, droppedComposerMedia);
-  await createNodeFromValues({
-    type: typeInput.value,
-    title: titleInput.value,
-    body: bodyInput.value,
-    duration: durationInput.value,
-    mediaFile,
-    clusterId: clusterInput.value,
-  });
+  setNodeSubmissionPending(true, mediaFile ? "ファイルのアップロードと保存を処理中です。画面を閉じずにお待ちください。" : "光点を保存しています。");
+  try {
+    await createNodeFromValues({
+      type: typeInput.value,
+      title: titleInput.value,
+      body: bodyInput.value,
+      duration: durationInput.value,
+      mediaFile,
+      clusterId: clusterInput.value,
+    });
 
-  titleInput.value = "";
-  bodyInput.value = "";
-  mediaFileInput.value = "";
-  clearDroppedMedia(droppedComposerMedia, mediaDropStatus, clearDroppedMediaButton, mediaDropZone, typeInput.value);
-  clearPastedImage(pastedComposerImage, clipboardImagePreview, clipboardImageStatus, clearClipboardImageButton, clipboardImagePanel);
-  clusterInput.value = getPublicClusterId();
-  setPanelOpen(composerToggle, composerPanel, false);
-  renderAll();
+    titleInput.value = "";
+    bodyInput.value = "";
+    mediaFileInput.value = "";
+    clearDroppedMedia(droppedComposerMedia, mediaDropStatus, clearDroppedMediaButton, mediaDropZone, typeInput.value);
+    clearPastedImage(pastedComposerImage, clipboardImagePreview, clipboardImageStatus, clearClipboardImageButton, clipboardImagePanel);
+    clusterInput.value = getPublicClusterId();
+    setPanelOpen(composerToggle, composerPanel, false);
+    renderAll();
+  } finally {
+    setNodeSubmissionPending(false);
+  }
 }
 
 async function addCluster() {
@@ -4123,30 +4161,37 @@ function bindDetailComposer(originNode) {
     clearPastedImage(pastedDetailImage, pastePreview, pasteStatus, pasteClearButton, pastePanel);
   });
   addButtonElement.addEventListener("click", async () => {
+    if (isNodeSubmissionPending) return;
     if (hasOversizedMediaFile(typeField.value, fileField, pastedDetailImage, droppedDetailMedia)) {
       window.alert(getUploadLimitMessage(typeField.value));
       return;
     }
     const mediaFile = getMediaFileForType(typeField.value, fileField, pastedDetailImage, droppedDetailMedia);
-    const createdNode = await createNodeFromValues({
-      type: typeField.value,
-      title: titleField.value,
-      body: bodyField.value,
-      duration: durationFieldInput.value,
-      mediaFile,
-      clusterId: clusterField.value,
-      originNode,
-    });
-    await createLinkBetween(originNode.id, createdNode.id, "link");
-    titleField.value = "";
-    bodyField.value = "";
-    fileField.value = "";
-    clearDroppedMedia(droppedDetailMedia, dropStatus, dropClearButton, dropZone, typeField.value);
-    clearPastedImage(pastedDetailImage, pastePreview, pasteStatus, pasteClearButton, pastePanel);
-    durationFieldInput.value = "180";
-    renderAll();
-    closeDetailDialog();
+    setNodeSubmissionPending(true, mediaFile ? "ファイルのアップロードと接続を処理中です。画面を閉じずにお待ちください。" : "光点の保存と接続を処理中です。");
+    try {
+      const createdNode = await createNodeFromValues({
+        type: typeField.value,
+        title: titleField.value,
+        body: bodyField.value,
+        duration: durationFieldInput.value,
+        mediaFile,
+        clusterId: clusterField.value,
+        originNode,
+      });
+      await createLinkBetween(originNode.id, createdNode.id, "link");
+      titleField.value = "";
+      bodyField.value = "";
+      fileField.value = "";
+      clearDroppedMedia(droppedDetailMedia, dropStatus, dropClearButton, dropZone, typeField.value);
+      clearPastedImage(pastedDetailImage, pastePreview, pasteStatus, pasteClearButton, pastePanel);
+      durationFieldInput.value = "180";
+      renderAll();
+      closeDetailDialog();
+    } finally {
+      setNodeSubmissionPending(false);
+    }
   });
+  updateNodeSubmissionControls();
 }
 
 function bindDeleteNodeAction(node) {
@@ -4637,6 +4682,9 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
     refreshStateFromServer();
   }
+});
+nodeProcessingDialog?.addEventListener("cancel", (event) => {
+  event.preventDefault();
 });
 detailDialog.addEventListener("close", stopDetailPlayback);
 
