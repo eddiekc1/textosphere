@@ -175,6 +175,8 @@ const NODE_POSITION_ANIMATION_MS = 1_800;
 const UNIVERSE_COORD_UNIT_PX = 10;
 const UNIVERSE_DEFAULT_CENTER = { x: 50, y: 50 };
 const MEGA_CLUSTER_VISUAL_SCALE = 1;
+const NEW_NODE_COLLISION_DISTANCE = 11;
+const NEW_NODE_PLACEMENT_STEP = 12;
 const NEW_NODE_HIGHLIGHT_MS = 6_500;
 const UNIVERSE_MODE_STORAGE_KEY = "textosphereUniverseMode";
 const UNIVERSE_MODES = {
@@ -3813,19 +3815,65 @@ function getDefaultSelection(type, body, duration) {
   return { start: 0, end: duration };
 }
 
+function clampNodeCreationPosition(point) {
+  return {
+    x: clamp(Number(point?.x), nodeDragBounds.minX, nodeDragBounds.maxX),
+    y: clamp(Number(point?.y), nodeDragBounds.minY, nodeDragBounds.maxY),
+  };
+}
+
+function areNodePositionsOverlapping(first, second, distance = NEW_NODE_COLLISION_DISTANCE) {
+  if (!first || !second) return false;
+  const dx = Number(first.x) - Number(second.x);
+  const dy = Number(first.y) - Number(second.y);
+  return Number.isFinite(dx) && Number.isFinite(dy) && Math.hypot(dx, dy) < distance;
+}
+
+function isNodeCreationPositionOpen(point) {
+  return !nodes.some((node) => areNodePositionsOverlapping(point, node));
+}
+
+function getOffsetNodeCreationCandidates(base) {
+  const step = NEW_NODE_PLACEMENT_STEP;
+  return [
+    { x: 0, y: 0 },
+    { x: 0, y: -step },
+    { x: step, y: -step },
+    { x: step, y: 0 },
+    { x: step, y: step },
+    { x: 0, y: step },
+    { x: -step, y: step },
+    { x: -step, y: 0 },
+    { x: -step, y: -step },
+  ].map((offset) => clampNodeCreationPosition({ x: base.x + offset.x, y: base.y + offset.y }));
+}
+
+function findOpenNodeCreationPosition(base) {
+  const candidates = getOffsetNodeCreationCandidates(base);
+  return candidates.find(isNodeCreationPositionOpen) || base;
+}
+
 function getNewNodePosition(originNode = null) {
-  if (originNode) {
-    return {
-      x: clamp(originNode.x + 12 + Math.random() * 8 - 4, nodeDragBounds.minX, nodeDragBounds.maxX),
-      y: clamp(originNode.y + 10 + Math.random() * 8 - 4, nodeDragBounds.minY, nodeDragBounds.maxY),
-    };
+  const center = getCurrentUniverseLocation();
+  if (Number.isFinite(center.x) && Number.isFinite(center.y)) {
+    const centerPosition = clampNodeCreationPosition(center);
+    if (!originNode) return centerPosition;
+    const originPosition = clampNodeCreationPosition(originNode);
+    const basePosition = areNodePositionsOverlapping(centerPosition, originPosition)
+      ? clampNodeCreationPosition({
+          x: centerPosition.x + NEW_NODE_PLACEMENT_STEP,
+          y: centerPosition.y + NEW_NODE_PLACEMENT_STEP,
+        })
+      : centerPosition;
+    return findOpenNodeCreationPosition(basePosition);
   }
 
   const angle = nodes.length * 0.92;
-  return {
-    x: clamp(50 + Math.cos(angle) * 25 + Math.random() * 10 - 5, 12, 88),
-    y: clamp(50 + Math.sin(angle) * 25 + Math.random() * 10 - 5, 16, 84),
-  };
+  const fallback = clampNodeCreationPosition({
+    x: 50 + Math.cos(angle) * 25 + Math.random() * 10 - 5,
+    y: 50 + Math.sin(angle) * 25 + Math.random() * 10 - 5,
+  });
+  return originNode ? findOpenNodeCreationPosition(fallback) : fallback;
 }
 
 async function createNodeFromValues({ type, title, body, duration, mediaFile, clusterId = getPublicClusterId(), originNode = null }) {
