@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Textosphere</title>
-    <link rel="stylesheet" href="styles.css?v=20260601-temporary-bin" />
+    <link rel="stylesheet" href="styles.css?v=20260602-search" />
   </head>
   <body>
     <section class="auth-shell" id="authShell" hidden>
@@ -41,7 +41,8 @@
       </div>
     </section>
     <div class="app-shell" id="appShell" hidden>
-      <aside class="sidebar" aria-label="投稿作成">
+      <button class="sidebar-toggle-button" id="sidebarToggleButton" type="button" aria-controls="leftSidebar" aria-expanded="true" aria-label="左サイドバーを隠す">メニュー</button>
+      <aside class="sidebar" id="leftSidebar" aria-label="投稿作成">
         <header class="brand">
           <button class="brand-mark brand-info-button" id="brandInfoButton" type="button" aria-label="Textosphereについて開く" title="Textosphereについて"></button>
           <div>
@@ -101,8 +102,7 @@
           <button class="home-button home-save-button" id="saveHomeButton" type="button" title="この場所をホームにする">この場所をホームにする</button>
         </div>
         <div class="map-toolbar">
-          <button class="icon-button" id="shuffleButton" type="button" title="配置を揺らす" aria-label="配置を揺らす"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /></svg></button>
-          <button class="icon-button" id="clearLinksButton" type="button" title="線を消す" aria-label="線を消す"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M7 7l-2 2a4 4 0 0 0 0 6l1 1a4 4 0 0 0 6 0l2-2M10 6l2-2a4 4 0 0 1 6 0l1 1a4 4 0 0 1 0 6l-2 2" /></svg></button>
+          <button class="mode-toggle-button" id="universeModeButton" type="button" title="探索モードに切り替え" aria-label="探索モードに切り替え">文脈</button>
         </div>
         <div class="universe-scroll-edge universe-scroll-edge-left" aria-hidden="true"></div>
         <div class="universe-scroll-edge universe-scroll-edge-right" aria-hidden="true"></div>
@@ -113,12 +113,12 @@
         </section>
         <div class="link-comment-tooltip" id="linkCommentTooltip" aria-hidden="true"></div>
       </main>
-      <aside class="search-sidebar" id="searchSidebar" aria-label="光点検索">
-        <button class="search-sidebar-toggle" id="searchSidebarToggle" type="button" aria-label="光点検索を隠す" title="光点検索を隠す">>></button>
+      <aside class="search-sidebar" id="searchSidebar" aria-label="検索">
+        <button class="search-sidebar-toggle" id="searchSidebarToggle" type="button" aria-label="検索を隠す" title="検索を隠す">>></button>
         <section class="panel search-panel">
-          <div class="panel-heading"><h2>光点検索</h2><span id="searchResultCount">0</span></div>
-          <label class="field"><span>種別</span><select id="searchTypeInput"><option value="all">すべて</option><option value="text">テキスト</option><option value="image">画像</option><option value="music">音楽</option><option value="video">映像</option></select></label>
-          <label class="field"><span>ワード</span><input id="searchWordInput" type="search" placeholder="タイトル・本文から検索" /></label>
+          <div class="panel-heading"><h2>検索</h2><span id="searchResultCount">0</span></div>
+          <label class="field"><span>種別</span><select id="searchTypeInput"><option value="all">すべて</option><option value="text">テキスト</option><option value="image">画像</option><option value="music">音楽</option><option value="video">映像</option><option value="user">ユーザー</option><option value="cluster">クラスタ</option></select></label>
+          <label class="field"><span>ワード</span><input id="searchWordInput" type="search" placeholder="タイトル・本文・ユーザー名・自己紹介・クラスタ名・クラスタ説明" /></label>
           <div class="search-sort-grid">
             <label class="field"><span>並べ替え</span><select id="searchSortInput"><option value="createdAt">登録日時</option><option value="likeCount">Like数</option><option value="connectionCount">接続ノード数</option></select></label>
             <label class="field"><span>順序</span><select id="searchOrderInput"><option value="desc">降順</option><option value="asc">昇順</option></select></label>
@@ -334,6 +334,6 @@ Textosphere プライバシーポリシー
     <dialog class="cluster-nodes-dialog" id="clusterNodesDialog"><div class="cluster-nodes-shell"><button class="close-button" id="closeClusterNodesDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="clusterNodesType">クラスタ</div><h2 id="clusterNodesTitle"></h2><p class="cluster-nodes-meta" id="clusterNodesMeta"></p><div class="cluster-nodes-actions" id="clusterNodesActions"></div><div class="cluster-nodes-content" id="clusterNodesContent"></div></div></dialog>
     <dialog class="notification-dialog" id="notificationDialog"><div class="notification-shell"><button class="close-button" id="closeNotificationDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="notification-dialog-head"><div><div class="detail-type">通知</div><h2>通知一覧</h2></div><button class="ghost-button" id="markNotificationsReadButton" type="button">すべて既読</button></div><div class="notification-list" id="notificationList"></div></div></dialog>
     <dialog class="processing-dialog" id="nodeProcessingDialog" aria-labelledby="nodeProcessingTitle" aria-describedby="nodeProcessingMessage"><div class="processing-shell"><div class="processing-spinner" aria-hidden="true"></div><div><h2 id="nodeProcessingTitle">光点を追加しています</h2><p id="nodeProcessingMessage">アップロードと保存を処理中です。画面を閉じずにお待ちください。</p></div></div></dialog>
-    <script src="app.js?v=20260602-share"></script>
+    <script src="app.js?v=20260602-search"></script>
   </body>
 </html>

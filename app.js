@@ -3,6 +3,8 @@ const temporaryNodeBin = document.querySelector("#temporaryNodeBin");
 const temporaryNodeList = document.querySelector("#temporaryNodeList");
 const temporaryNodeCount = document.querySelector("#temporaryNodeCount");
 const appShell = document.querySelector("#appShell");
+const leftSidebar = document.querySelector("#leftSidebar");
+const sidebarToggleButton = document.querySelector("#sidebarToggleButton");
 const authShell = document.querySelector("#authShell");
 const authMessage = document.querySelector("#authMessage");
 const loginEmailInput = document.querySelector("#loginEmailInput");
@@ -51,8 +53,7 @@ const clusterPanel = document.querySelector("#clusterPanel");
 const clusterNameInput = document.querySelector("#clusterNameInput");
 const clusterDescriptionInput = document.querySelector("#clusterDescriptionInput");
 const addClusterButton = document.querySelector("#addClusterButton");
-const shuffleButton = document.querySelector("#shuffleButton");
-const clearLinksButton = document.querySelector("#clearLinksButton");
+const universeModeButton = document.querySelector("#universeModeButton");
 const homeButton = document.querySelector("#homeButton");
 const saveHomeButton = document.querySelector("#saveHomeButton");
 const nodeCount = document.querySelector("#nodeCount");
@@ -171,12 +172,34 @@ const NOTIFICATION_REFRESH_MS = 30_000;
 const NOTIFICATION_PAGE_SIZE = 20;
 const NODE_POSITION_REFRESH_MS = 20_000;
 const NODE_POSITION_ANIMATION_MS = 1_800;
-const MEGA_CLUSTER_VISUAL_SCALE = 0.72;
+const UNIVERSE_COORD_UNIT_PX = 10;
+const UNIVERSE_DEFAULT_CENTER = { x: 50, y: 50 };
+const MEGA_CLUSTER_VISUAL_SCALE = 1;
 const NEW_NODE_HIGHLIGHT_MS = 6_500;
+const UNIVERSE_MODE_STORAGE_KEY = "textosphereUniverseMode";
+const UNIVERSE_MODES = {
+  context: "context",
+  explore: "explore",
+};
+const EXPLORATION_AREA_RADIUS_RATIO = 0.28;
+const EXPLORATION_AREA_MIN_RADIUS = 116;
+const EXPLORATION_AREA_MAX_RADIUS = 280;
 const NODE_DRAG_MIN_X = -220;
 const NODE_DRAG_MAX_X = 320;
 const NODE_DRAG_MIN_Y = -220;
 const NODE_DRAG_MAX_Y = 320;
+const DEFAULT_NODE_DRAG_BOUNDS = {
+  minX: NODE_DRAG_MIN_X,
+  maxX: NODE_DRAG_MAX_X,
+  minY: NODE_DRAG_MIN_Y,
+  maxY: NODE_DRAG_MAX_Y,
+};
+const NODE_DISPLAY_LAYERS = {
+  home: { className: "node-layer-home", scale: 1, useTypeColor: true },
+  interest: { className: "node-layer-interest", scale: 0.82, useTypeColor: true },
+  connected: { className: "node-layer-connected", scale: 0.52, useTypeColor: true },
+  background: { className: "node-layer-background", scale: 0.34, useTypeColor: false },
+};
 const CONNECTION_DROP_BASE_THRESHOLD = 96;
 const CONNECTION_DROP_MIN_THRESHOLD = 36;
 
@@ -220,7 +243,10 @@ let activeClusterListMode = localStorage.getItem("textosphereClusterListMode") =
 let isNodeSubmissionPending = false;
 let universePan = { x: 0, y: 0 };
 let universeZoom = 1;
+let universeMode = localStorage.getItem(UNIVERSE_MODE_STORAGE_KEY) === UNIVERSE_MODES.explore ? UNIVERSE_MODES.explore : UNIVERSE_MODES.context;
+let nodeDragBounds = { ...DEFAULT_NODE_DRAG_BOUNDS };
 let currentHomeLocation = null;
+let lastMapSize = null;
 let viewportPositionedNodeIds = new Set();
 let stateRefreshTimer = null;
 let stateRefreshInFlight = false;
@@ -239,6 +265,7 @@ let clusters = [
   },
 ];
 let clusterDirectory = [...clusters];
+let publicUsers = [];
 let followedClusterIds = new Set();
 let megaClusters = [];
 const highlightedNewNodeIds = new Map();
@@ -844,7 +871,6 @@ function setAuthenticatedView(user) {
   startStateRefresh();
   startNotificationRefresh();
   startNodePositionRefresh();
-  shuffleButton.hidden = Number(user.role) !== 1;
   currentUserId.textContent = getUserName(user);
   currentUserBio.textContent = user.bio || "自己紹介文は未設定です";
   currentUserIcon.replaceChildren();
@@ -869,7 +895,6 @@ function showAuth() {
   stopNotificationRefresh();
   stopNodePositionRefresh();
   updateHomeControls();
-  shuffleButton.hidden = true;
   appShell.hidden = true;
   authShell.hidden = false;
   clearInitialAuthFields();
@@ -1077,6 +1102,19 @@ async function saveProfile() {
   }
 }
 
+function normalizeUniverseBounds(bounds) {
+  const next = {
+    minX: Number(bounds?.minX ?? DEFAULT_NODE_DRAG_BOUNDS.minX),
+    maxX: Number(bounds?.maxX ?? DEFAULT_NODE_DRAG_BOUNDS.maxX),
+    minY: Number(bounds?.minY ?? DEFAULT_NODE_DRAG_BOUNDS.minY),
+    maxY: Number(bounds?.maxY ?? DEFAULT_NODE_DRAG_BOUNDS.maxY),
+  };
+  if (![next.minX, next.maxX, next.minY, next.maxY].every(Number.isFinite) || next.minX >= next.maxX || next.minY >= next.maxY) {
+    return { ...DEFAULT_NODE_DRAG_BOUNDS };
+  }
+  return next;
+}
+
 function normalizeNode(node) {
   const max = node.type === "text" ? (node.body || "").length : Number(node.duration || 0);
   const selection = node.selection || { start: 0, end: max };
@@ -1100,8 +1138,8 @@ function normalizeNode(node) {
       start: selectionStart,
       end: clamp(Number(selection.end ?? max), selectionStart, max),
     },
-    x: clamp(Number(node.x), NODE_DRAG_MIN_X, NODE_DRAG_MAX_X),
-    y: clamp(Number(node.y), NODE_DRAG_MIN_Y, NODE_DRAG_MAX_Y),
+    x: clamp(Number(node.x), nodeDragBounds.minX, nodeDragBounds.maxX),
+    y: clamp(Number(node.y), nodeDragBounds.minY, nodeDragBounds.maxY),
   };
 }
 
@@ -1112,7 +1150,19 @@ function normalizeCluster(cluster) {
     ownerUser: cluster.ownerUser || null,
     name: String(cluster.name || "").trim() || "Untitled cluster",
     description: cluster.description || "",
+    followerCount: Number(cluster.followerCount || 0),
     createdAt: cluster.createdAt || new Date().toISOString(),
+  };
+}
+
+function normalizePublicUser(user) {
+  return {
+    id: user.id || "",
+    userId: user.userId || "unknown",
+    userName: user.userName || user.userId || "unknown",
+    profileIcon: user.profileIcon || "",
+    bio: user.bio || "",
+    createdAt: user.createdAt || new Date().toISOString(),
   };
 }
 
@@ -1203,8 +1253,10 @@ async function loadState() {
     universeZoom = 1;
     currentHomeLocation = normalizeHomeLocation(state.homeLocation);
     viewportPositionedNodeIds = new Set();
+    nodeDragBounds = normalizeUniverseBounds(state.universeBounds);
     clusters = ensurePublicCluster(state.clusters || []);
     clusterDirectory = ensurePublicCluster(state.clusterDirectory || state.clusters || []);
+    publicUsers = (state.users || []).map(normalizePublicUser);
     followedClusterIds = new Set(state.followedClusterIds || []);
     megaClusters = Number(state.currentUser?.role || currentUser?.role) === 1 ? (state.megaClusters || []).map(normalizeMegaCluster) : [];
     nodes = state.nodes.map(normalizeNode);
@@ -1218,16 +1270,19 @@ async function loadState() {
     currentHomeLocation = null;
   }
 
-  renderAll();
+  lastMapSize = null;
   if (currentHomeLocation) {
-    moveUniverseToHome();
+    setUniverseViewCenter(currentHomeLocation.x, currentHomeLocation.y, currentHomeLocation.zoom);
   } else {
+    setUniverseViewCenter(UNIVERSE_DEFAULT_CENTER.x, UNIVERSE_DEFAULT_CENTER.y, 1);
     updateHomeControls();
   }
+  renderAll();
   requestAnimationFrame(resizeCanvas);
 }
 
 function applyRemoteState(state) {
+  nodeDragBounds = normalizeUniverseBounds(state.universeBounds || nodeDragBounds);
   const nextNodes = (state.nodes || []).map(normalizeNode);
   const nextLinks = (state.links || []).map(normalizeLink);
   const nextNodeIds = new Set(nextNodes.map((node) => node.id));
@@ -1239,6 +1294,7 @@ function applyRemoteState(state) {
   currentHomeLocation = normalizeHomeLocation(state.homeLocation);
   clusters = ensurePublicCluster(state.clusters || []);
   clusterDirectory = ensurePublicCluster(state.clusterDirectory || state.clusters || []);
+  publicUsers = (state.users || publicUsers).map(normalizePublicUser);
   followedClusterIds = new Set(state.followedClusterIds || []);
   megaClusters = Number(currentUser?.role) === 1 ? (state.megaClusters || []).map(normalizeMegaCluster) : [];
   nodes = nextNodes;
@@ -1520,6 +1576,42 @@ function getMapRect() {
   return nodesLayer.getBoundingClientRect();
 }
 
+function coordToWorld(value) {
+  return Number(value) * UNIVERSE_COORD_UNIT_PX;
+}
+
+function worldToCoord(value) {
+  return Number(value) / UNIVERSE_COORD_UNIT_PX;
+}
+
+function getCoordinateWorldPoint(point) {
+  return {
+    x: coordToWorld(point.x),
+    y: coordToWorld(point.y),
+  };
+}
+
+function getViewportCenterWorldPoint(rect = getMapRect()) {
+  const width = rect.width || window.innerWidth || 960;
+  const height = rect.height || window.innerHeight || 640;
+  return {
+    x: (width / 2 - universePan.x) / universeZoom,
+    y: (height / 2 - universePan.y) / universeZoom,
+  };
+}
+
+function setUniverseViewCenter(x, y, zoom = universeZoom) {
+  const rect = getMapRect();
+  const width = rect.width || window.innerWidth || 960;
+  const height = rect.height || window.innerHeight || 640;
+  const worldPoint = getCoordinateWorldPoint({ x, y });
+  universeZoom = clamp(Number(zoom) || 1, MIN_UNIVERSE_ZOOM, MAX_UNIVERSE_ZOOM);
+  universePan = {
+    x: width / 2 - worldPoint.x * universeZoom,
+    y: height / 2 - worldPoint.y * universeZoom,
+  };
+}
+
 function updateHomeControls() {
   if (!homeButton || !saveHomeButton) return;
   homeButton.disabled = !currentHomeLocation;
@@ -1528,12 +1620,10 @@ function updateHomeControls() {
 }
 
 function getCurrentUniverseLocation() {
-  const rect = getMapRect();
-  const width = rect.width || window.innerWidth || 960;
-  const height = rect.height || window.innerHeight || 640;
+  const center = getViewportCenterWorldPoint();
   return {
-    x: ((width / 2 - universePan.x) / universeZoom / width) * 100,
-    y: ((height / 2 - universePan.y) / universeZoom / height) * 100,
+    x: worldToCoord(center.x),
+    y: worldToCoord(center.y),
     zoom: universeZoom,
   };
 }
@@ -1545,14 +1635,7 @@ function moveUniverseToHome() {
     return;
   }
 
-  const rect = getMapRect();
-  const width = rect.width || window.innerWidth || 960;
-  const height = rect.height || window.innerHeight || 640;
-  universeZoom = home.zoom;
-  universePan = {
-    x: width / 2 - (home.x / 100) * width * universeZoom,
-    y: height / 2 - (home.y / 100) * height * universeZoom,
-  };
+  setUniverseViewCenter(home.x, home.y, home.zoom);
   renderNodes();
   drawLinks();
   updateHomeControls();
@@ -1641,9 +1724,22 @@ function separateNodePositions(sourceNodes, iterations = 90) {
 
 function resizeCanvas() {
   const rect = getMapRect();
+  const width = rect.width || window.innerWidth || 960;
+  const height = rect.height || window.innerHeight || 640;
+  if (lastMapSize && lastMapSize.width > 0 && lastMapSize.height > 0 && (lastMapSize.width !== width || lastMapSize.height !== height)) {
+    const center = {
+      x: (lastMapSize.width / 2 - universePan.x) / universeZoom,
+      y: (lastMapSize.height / 2 - universePan.y) / universeZoom,
+    };
+    universePan = {
+      x: width / 2 - center.x * universeZoom,
+      y: height / 2 - center.y * universeZoom,
+    };
+  }
+  lastMapSize = { width, height };
   const scale = window.devicePixelRatio || 1;
-  canvas.width = Math.floor(rect.width * scale);
-  canvas.height = Math.floor(rect.height * scale);
+  canvas.width = Math.floor(width * scale);
+  canvas.height = Math.floor(height * scale);
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
   renderNodes();
   drawLinks();
@@ -1657,10 +1753,10 @@ function usesStoredNodePosition(node, initialNodeIds = getUniverseInitialNodeIds
   return initialNodeIds.has(node.id) || viewportPositionedNodeIds.has(node.id);
 }
 
-function getStoredNodeWorldPoint(node, rect = getMapRect()) {
+function getStoredNodeWorldPoint(node) {
   return {
-    x: (node.x / 100) * rect.width,
-    y: (node.y / 100) * rect.height,
+    x: coordToWorld(node.x),
+    y: coordToWorld(node.y),
   };
 }
 
@@ -1909,6 +2005,88 @@ function drawMegaClusterGuides() {
   ctx.restore();
 }
 
+function drawUniverseCenterGuide() {
+  const rect = getMapRect();
+  const center = {
+    x: rect.width / 2,
+    y: rect.height / 2,
+  };
+  const centerWorld = getViewportCenterWorldPoint(rect);
+  const centerCoord = {
+    x: worldToCoord(centerWorld.x),
+    y: worldToCoord(centerWorld.y),
+  };
+  const guideScale = clamp(universeZoom, 0.7, 1.5);
+  const arm = 18 * guideScale;
+  const ring = 7 * guideScale;
+  ctx.save();
+  ctx.globalAlpha = 0.34;
+  ctx.strokeStyle = "rgba(246, 251, 255, 0.46)";
+  ctx.fillStyle = "rgba(246, 251, 255, 0.38)";
+  ctx.lineWidth = 1;
+  ctx.shadowColor = "rgba(94, 231, 255, 0.38)";
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.moveTo(center.x - arm, center.y);
+  ctx.lineTo(center.x - ring, center.y);
+  ctx.moveTo(center.x + ring, center.y);
+  ctx.lineTo(center.x + arm, center.y);
+  ctx.moveTo(center.x, center.y - arm);
+  ctx.lineTo(center.x, center.y - ring);
+  ctx.moveTo(center.x, center.y + ring);
+  ctx.lineTo(center.x, center.y + arm);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, ring, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.font = "11px Inter, ui-sans-serif, system-ui";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillText(`座標 ${centerCoord.x.toFixed(1)}, ${centerCoord.y.toFixed(1)}`, center.x + arm + 8, center.y + arm * 0.55);
+  ctx.restore();
+}
+
+function isExplorationMode() {
+  return universeMode === UNIVERSE_MODES.explore;
+}
+
+function getExplorationArea(rect = getMapRect()) {
+  const radius = clamp(
+    Math.min(rect.width, rect.height) * EXPLORATION_AREA_RADIUS_RATIO,
+    EXPLORATION_AREA_MIN_RADIUS,
+    EXPLORATION_AREA_MAX_RADIUS,
+  );
+  return {
+    x: rect.width / 2,
+    y: rect.height / 2,
+    radius,
+  };
+}
+
+function isPointInExplorationArea(point, rect = getMapRect()) {
+  const area = getExplorationArea(rect);
+  return Math.hypot(point.x - area.x, point.y - area.y) <= area.radius;
+}
+
+function drawExplorationArea(rect = getMapRect()) {
+  if (!isExplorationMode()) return;
+  const area = getExplorationArea(rect);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(area.x, area.y, area.radius, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(94, 231, 255, 0.045)";
+  ctx.strokeStyle = "rgba(94, 231, 255, 0.52)";
+  ctx.lineWidth = Math.max(1.2, 1.8 * clamp(universeZoom, 0.55, 1.5));
+  ctx.setLineDash([8, 10]);
+  ctx.shadowColor = "rgba(94, 231, 255, 0.52)";
+  ctx.shadowBlur = 18;
+  ctx.fill();
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
 function drawLinks() {
   const rect = getMapRect();
   ctx.clearRect(0, 0, rect.width, rect.height);
@@ -1916,11 +2094,16 @@ function drawLinks() {
   ctx.textBaseline = "middle";
   linkCommentHitboxes = [];
   drawMegaClusterGuides();
+  drawUniverseCenterGuide();
+  drawExplorationArea(rect);
+  if (isExplorationMode()) return;
+  const displayLayerContext = createNodeDisplayLayerContext();
 
   links.forEach((link) => {
     const source = nodes.find((node) => node.id === link.source);
     const target = nodes.find((node) => node.id === link.target);
     if (!source || !target) return;
+    if (getNodeDisplayLayer(source, displayLayerContext) === "background" || getNodeDisplayLayer(target, displayLayerContext) === "background") return;
 
     const from = getNodePoint(source);
     const to = getNodePoint(target);
@@ -2002,20 +2185,34 @@ function isNewNodeHighlighted(id) {
 
 function renderNodes() {
   nodesLayer.innerHTML = "";
+  const displayLayerContext = createNodeDisplayLayerContext();
 
   nodes.forEach((node) => {
-    const isInVisibleScope = isNodeInVisibleScope(node);
+    const displayLayer = getNodeDisplayLayer(node, displayLayerContext);
+    const layerStyle = NODE_DISPLAY_LAYERS[displayLayer] || NODE_DISPLAY_LAYERS.background;
     const point = getNodePoint(node);
+    const isExplore = isExplorationMode();
+    const isInExplorationArea = displayLayer === "background" && isExplore && isPointInExplorationArea(point);
+    const isOutsideExplorationArea = isExplore && !isPointInExplorationArea(point);
+    const modeClass = isExplore ? "node-mode-explore" : "node-mode-context";
+    const exploreClass = isExplore
+      ? displayLayer === "background"
+        ? ` node-explore-background${isInExplorationArea ? " node-explore-in-area" : ""}`
+        : ` node-explore-muted${isOutsideExplorationArea ? " node-explore-outside-area" : ""}`
+      : "";
+    const nodeColor = isExplore && displayLayer !== "background" ? "#5b6470" : isExplore && displayLayer === "background" ? typeMeta[node.type].color : layerStyle.useTypeColor ? typeMeta[node.type].color : "#3f4652";
+    const nodeScale = isExplore && displayLayer === "background" ? 0.44 : layerStyle.scale;
     const button = document.createElement("button");
-    button.className = `node ${isInVisibleScope ? getNodeGlowClass(node.id) : "node-glow-muted node-out-of-scope"}${node.id === selectedNodeId ? " is-selected" : ""}${isNewNodeHighlighted(node.id) ? " is-newly-created" : ""}`;
+    button.className = `node ${modeClass} ${layerStyle.className} ${getNodeLayerGlowClass(node.id, displayLayer)}${displayLayer === "background" ? " node-out-of-scope" : ""}${exploreClass}${node.id === selectedNodeId ? " is-selected" : ""}${isNewNodeHighlighted(node.id) ? " is-newly-created" : ""}`;
     button.type = "button";
     button.style.left = `${point.x}px`;
     button.style.top = `${point.y}px`;
-    button.style.setProperty("--node-color", isInVisibleScope ? typeMeta[node.type].color : "#3f4652");
+    button.style.setProperty("--node-color", nodeColor);
     button.style.setProperty("--size", `${node.type === "text" ? 74 : 86}px`);
-    button.style.setProperty("--node-scale", String(clamp(universeZoom, 0.45, 2.6)));
+    button.style.setProperty("--node-scale", String(clamp(universeZoom, 0.45, 2.6) * nodeScale));
     button.setAttribute("aria-label", `${node.title}${labels.open}`);
     button.dataset.nodeId = node.id;
+    button.dataset.nodeLayer = displayLayer;
     button.innerHTML = `
       <span class="node-type">${typeMeta[node.type].glyph}</span>
       <span class="node-label">${escapeHtml(node.title)}</span>
@@ -2030,10 +2227,14 @@ function renderNodes() {
         suppressNodeClick = false;
         return;
       }
+      if (!canOpenNodeInUniverse(node, point, displayLayerContext)) return;
       selectedNodeId = node.id;
       updateSelectedNodeClass(node.id);
     });
-    button.addEventListener("dblclick", () => openDetail(node.id));
+    button.addEventListener("dblclick", () => {
+      if (!canOpenNodeInUniverse(node, point, displayLayerContext)) return;
+      openDetail(node.id);
+    });
     nodesLayer.appendChild(button);
   });
 }
@@ -2055,6 +2256,68 @@ function getNodeGlowClass(id) {
   if (relationCount === 0) return "node-glow-strong";
   if (relationCount <= 3) return "node-glow-normal";
   return "node-glow-dim";
+}
+
+function createNodeDisplayLayerContext() {
+  const homeIds = new Set();
+  const interestIds = new Set();
+  const connectedIds = new Set();
+
+  if (!currentUser) {
+    nodes.forEach((node) => homeIds.add(node.id));
+    return { homeIds, interestIds, connectedIds };
+  }
+
+  nodes.forEach((node) => {
+    if (node.ownerUserId === currentUser.id) {
+      homeIds.add(node.id);
+    } else if (followedClusterIds.has(node.clusterId) || node.favoritedByCurrentUser) {
+      interestIds.add(node.id);
+    }
+  });
+
+  const anchorIds = new Set([...homeIds, ...interestIds]);
+  getAllKnownLinks().forEach((link) => {
+    if (anchorIds.has(link.source) && !anchorIds.has(link.target)) {
+      connectedIds.add(link.target);
+    }
+    if (anchorIds.has(link.target) && !anchorIds.has(link.source)) {
+      connectedIds.add(link.source);
+    }
+  });
+
+  return { homeIds, interestIds, connectedIds };
+}
+
+function getNodeDisplayLayer(node, context = createNodeDisplayLayerContext()) {
+  if (context.homeIds.has(node.id)) return "home";
+  if (context.interestIds.has(node.id)) return "interest";
+  if (context.connectedIds.has(node.id)) return "connected";
+  return "background";
+}
+
+function getNodeLayerGlowClass(id, layer) {
+  if (layer === "home") return getNodeGlowClass(id);
+  if (layer === "interest") return "node-glow-normal";
+  if (layer === "connected") return "node-glow-dim";
+  return "node-glow-muted";
+}
+
+function canInteractWithNodeLayer(layer) {
+  return layer === "home" || layer === "interest";
+}
+
+function canMoveOrConnectNode(node, context = createNodeDisplayLayerContext()) {
+  if (isExplorationMode()) return false;
+  return canInteractWithNodeLayer(getNodeDisplayLayer(node, context));
+}
+
+function canOpenNodeInUniverse(node, point = getNodePoint(node), context = createNodeDisplayLayerContext()) {
+  const layer = getNodeDisplayLayer(node, context);
+  if (isExplorationMode()) {
+    return isPointInExplorationArea(point);
+  }
+  return layer !== "background";
 }
 
 function isNodeInVisibleScope(node) {
@@ -2128,9 +2391,11 @@ function getNodesByCreatedDesc(sourceNodes = nodes) {
 
 function getPointerMapPosition(event) {
   const rect = getMapRect();
+  const worldX = (event.clientX - rect.left - universePan.x) / universeZoom;
+  const worldY = (event.clientY - rect.top - universePan.y) / universeZoom;
   return {
-    x: clamp(((event.clientX - rect.left - universePan.x) / universeZoom / rect.width) * 100, NODE_DRAG_MIN_X, NODE_DRAG_MAX_X),
-    y: clamp(((event.clientY - rect.top - universePan.y) / universeZoom / rect.height) * 100, NODE_DRAG_MIN_Y, NODE_DRAG_MAX_Y),
+    x: clamp(worldToCoord(worldX), nodeDragBounds.minX, nodeDragBounds.maxX),
+    y: clamp(worldToCoord(worldY), nodeDragBounds.minY, nodeDragBounds.maxY),
   };
 }
 
@@ -2445,11 +2710,12 @@ function startNodeDrag(event, id, button) {
     return;
   }
   if (event.button !== 0) return;
+  const node = nodes.find((item) => item.id === id);
+  if (!node) return;
+  if (!canMoveOrConnectNode(node)) return;
   event.preventDefault();
   event.stopPropagation();
   materializeNodePositionForDrag(id);
-  const node = nodes.find((item) => item.id === id);
-  if (!node) return;
   selectedNodeId = id;
   updateSelectedNodeClass(id);
   activeNodeDrag = {
@@ -2508,12 +2774,15 @@ function getConnectionDropThreshold() {
 function findNearbyNodeForConnection(draggedId, threshold = getConnectionDropThreshold()) {
   const draggedNode = nodes.find((node) => node.id === draggedId);
   if (!draggedNode) return null;
+  const displayLayerContext = createNodeDisplayLayerContext();
+  if (!canMoveOrConnectNode(draggedNode, displayLayerContext)) return null;
 
   const draggedPoint = getNodePoint(draggedNode);
   let nearest = null;
   let nearestDistance = threshold;
   nodes.forEach((node) => {
     if (node.id === draggedId) return;
+    if (!canMoveOrConnectNode(node, displayLayerContext)) return;
     const point = getNodePoint(node);
     const distance = Math.hypot(point.x - draggedPoint.x, point.y - draggedPoint.y);
     if (distance < nearestDistance) {
@@ -2647,6 +2916,7 @@ function startTemporaryNodeDrag(event, id, item) {
   if (event.button !== 0) return;
   const node = nodes.find((candidate) => candidate.id === id);
   if (!node) return;
+  if (!canMoveOrConnectNode(node)) return;
   event.preventDefault();
   event.stopPropagation();
   selectedNodeId = id;
@@ -2736,9 +3006,9 @@ function renderNodeList() {
       <span class="node-list-dot" aria-hidden="true">${typeMeta[node.type].glyph}</span>
       <span class="node-list-main">
         <span class="node-list-title">${escapeHtml(node.title)}</span>
-        <span class="node-list-meta">${typeMeta[node.type].label}</span>
+        <span class="node-list-preview">${escapeHtml(truncateText(node.body, 42))}</span>
+        <span class="node-list-meta">${typeMeta[node.type].label} / ${escapeHtml(formatDateTime(node.createdAt) || "-")} / Like ${Number(node.likeCount || 0)} / 接続 ${getNodeRelationCount(node.id)}</span>
       </span>
-      <span class="node-list-preview">${escapeHtml(truncateText(node.body, 20))}</span>
     `;
     button.addEventListener("click", () => {
       selectedNodeId = node.id;
@@ -2820,7 +3090,42 @@ function getNodeSearchValue(node, sortKey) {
   return new Date(node.createdAt || 0).getTime();
 }
 
-function getSearchFilteredNodes() {
+function getClusterSearchValue(cluster, sortKey) {
+  if (sortKey === "followerCount") return Number(cluster.followerCount || 0);
+  return new Date(cluster.createdAt || 0).getTime();
+}
+
+function getUserSearchValue(user) {
+  return new Date(user.createdAt || 0).getTime();
+}
+
+function getSearchSortOptions(type = searchTypeInput.value) {
+  if (type === "cluster") {
+    return [
+      { value: "createdAt", label: "登録日時" },
+      { value: "followerCount", label: "フォロワー数" },
+    ];
+  }
+  if (type === "user" || type === "all") {
+    return [{ value: "createdAt", label: "登録日時" }];
+  }
+  return [
+    { value: "createdAt", label: "登録日時" },
+    { value: "likeCount", label: "Like数" },
+    { value: "connectionCount", label: "接続ノード数" },
+  ];
+}
+
+function updateSearchSortOptions() {
+  const currentValue = searchSortInput.value;
+  const options = getSearchSortOptions();
+  searchSortInput.innerHTML = options
+    .map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
+    .join("");
+  searchSortInput.value = options.some((option) => option.value === currentValue) ? currentValue : "createdAt";
+}
+
+function getSearchFilteredItems() {
   const type = searchTypeInput.value;
   const terms = String(searchWordInput.value || "")
     .trim()
@@ -2834,23 +3139,119 @@ function getSearchFilteredNodes() {
     return [];
   }
 
-  return [...nodes]
-    .filter((node) => {
-      if (type !== "all" && node.type !== type) return false;
+  const results = [];
+
+  if (type === "all" || ["text", "image", "music", "video"].includes(type)) {
+    nodes.forEach((node) => {
+      if (type !== "all" && node.type !== type) return;
       const haystack = `${node.title || ""}\n${node.body || ""}`.toLowerCase();
-      return terms.every((term) => haystack.includes(term));
-    })
-    .sort((first, second) => {
-      const firstValue = getNodeSearchValue(first, sortKey);
-      const secondValue = getNodeSearchValue(second, sortKey);
-      if (firstValue !== secondValue) return (firstValue - secondValue) * direction;
-      return String(first.title || "").localeCompare(String(second.title || ""), "ja");
+      if (!terms.every((term) => haystack.includes(term))) return;
+      results.push({
+        kind: "node",
+        item: node,
+        sortValue: getNodeSearchValue(node, type === "all" ? "createdAt" : sortKey),
+        title: node.title || "",
+      });
     });
+  }
+
+  if (type === "all" || type === "user") {
+    publicUsers.forEach((user) => {
+      const haystack = `${user.userName || ""}\n${user.userId || ""}\n${user.bio || ""}`.toLowerCase();
+      if (!terms.every((term) => haystack.includes(term))) return;
+      results.push({
+        kind: "user",
+        item: user,
+        sortValue: getUserSearchValue(user),
+        title: getUserName(user),
+      });
+    });
+  }
+
+  if (type === "all" || type === "cluster") {
+    clusterDirectory.forEach((cluster) => {
+      const haystack = `${cluster.name || ""}\n${cluster.description || ""}\n${getUserName(cluster.ownerUser)}`.toLowerCase();
+      if (!terms.every((term) => haystack.includes(term))) return;
+      results.push({
+        kind: "cluster",
+        item: cluster,
+        sortValue: getClusterSearchValue(cluster, type === "all" ? "createdAt" : sortKey),
+        title: cluster.name || "",
+      });
+    });
+  }
+
+  return results.sort((first, second) => {
+    if (first.sortValue !== second.sortValue) return (first.sortValue - second.sortValue) * direction;
+    if (first.kind !== second.kind) return first.kind.localeCompare(second.kind);
+    return String(first.title || "").localeCompare(String(second.title || ""), "ja");
+  });
+}
+
+function renderSearchNodeResult(node) {
+  const button = document.createElement("button");
+  button.className = `search-result-item${node.id === selectedNodeId ? " is-selected" : ""}`;
+  button.type = "button";
+  button.dataset.nodeId = node.id;
+  button.style.setProperty("--node-color", typeMeta[node.type].color);
+  button.innerHTML = `
+    <span class="node-list-dot" aria-hidden="true">${typeMeta[node.type].glyph}</span>
+    <span class="search-result-main">
+      <span class="search-result-title">${escapeHtml(node.title)}</span>
+      <span class="search-result-preview">${escapeHtml(truncateText(node.body, 42))}</span>
+      <span class="search-result-meta">${typeMeta[node.type].label} / ${escapeHtml(formatDateTime(node.createdAt) || "-")} / Like ${Number(node.likeCount || 0)} / 接続 ${getNodeRelationCount(node.id)}</span>
+    </span>
+  `;
+  button.addEventListener("click", () => {
+    selectedNodeId = node.id;
+    updateSelectedNodeClass(node.id);
+    centerUniverseOnNode(node.id);
+  });
+  button.addEventListener("dblclick", () => openDetail(node.id));
+  return button;
+}
+
+function renderSearchUserResult(user) {
+  const button = document.createElement("button");
+  button.className = "search-result-item search-result-user";
+  button.type = "button";
+  button.dataset.userId = user.id;
+  button.style.setProperty("--node-color", "#5ee7ff");
+  const icon = resolveMediaUrl(user.profileIcon);
+  button.innerHTML = `
+    <span class="node-list-dot search-result-avatar" aria-hidden="true">${icon ? `<img src="${escapeHtml(icon)}" alt="" />` : escapeHtml(getUserName(user).slice(0, 1).toUpperCase())}</span>
+    <span class="search-result-main">
+      <span class="search-result-title">${escapeHtml(getUserName(user))}</span>
+      <span class="search-result-preview">${escapeHtml(truncateText(user.bio || "自己紹介なし", 42))}</span>
+      <span class="search-result-meta">ユーザー / ${escapeHtml(formatDateTime(user.createdAt) || "-")}</span>
+    </span>
+  `;
+  button.addEventListener("click", () => openUserDetail(user.id));
+  return button;
+}
+
+function renderSearchClusterResult(cluster) {
+  const button = document.createElement("button");
+  button.className = "search-result-item search-result-cluster";
+  button.type = "button";
+  button.dataset.clusterId = cluster.id;
+  button.style.setProperty("--node-color", "#ffd166");
+  button.innerHTML = `
+    <span class="node-list-dot" aria-hidden="true">C</span>
+    <span class="search-result-main">
+      <span class="search-result-title">${escapeHtml(cluster.name)}</span>
+      <span class="search-result-preview">${escapeHtml(truncateText(cluster.description || "説明なし", 42))}</span>
+      <span class="search-result-meta">クラスタ / フォロワー ${Number(cluster.followerCount || 0)} / ${escapeHtml(formatDateTime(cluster.createdAt) || "-")}</span>
+    </span>
+  `;
+  button.addEventListener("click", () => openClusterNodesDialog(cluster.id));
+  return button;
 }
 
 function renderSearchResults() {
   const hasSearchWord = String(searchWordInput.value || "").trim().length > 0;
-  const results = getSearchFilteredNodes();
+  updateSearchSortOptions();
+  const results = getSearchFilteredItems();
   const displayedResults = results.slice(0, searchResultVisibleCount);
   searchResultCount.textContent = String(results.length);
 
@@ -2860,32 +3261,19 @@ function renderSearchResults() {
   }
 
   if (results.length === 0) {
-    searchResults.innerHTML = `<p class="search-empty">該当する光点はありません</p>`;
+    searchResults.innerHTML = `<p class="search-empty">該当する結果はありません</p>`;
     return;
   }
 
   searchResults.innerHTML = "";
-  displayedResults.forEach((node) => {
-    const button = document.createElement("button");
-    button.className = `search-result-item${node.id === selectedNodeId ? " is-selected" : ""}`;
-    button.type = "button";
-    button.dataset.nodeId = node.id;
-    button.style.setProperty("--node-color", typeMeta[node.type].color);
-    button.innerHTML = `
-      <span class="node-list-dot" aria-hidden="true">${typeMeta[node.type].glyph}</span>
-      <span class="search-result-main">
-        <span class="search-result-title">${escapeHtml(node.title)}</span>
-        <span class="search-result-preview">${escapeHtml(truncateText(node.body, 42))}</span>
-        <span class="search-result-meta">${typeMeta[node.type].label} / ${escapeHtml(formatDateTime(node.createdAt) || "-")} / 👍 ${Number(node.likeCount || 0)} / 接続 ${getNodeRelationCount(node.id)}</span>
-      </span>
-    `;
-    button.addEventListener("click", () => {
-      selectedNodeId = node.id;
-      updateSelectedNodeClass(node.id);
-      centerUniverseOnNode(node.id);
-    });
-    button.addEventListener("dblclick", () => openDetail(node.id));
-    searchResults.appendChild(button);
+  displayedResults.forEach((result) => {
+    const element =
+      result.kind === "user"
+        ? renderSearchUserResult(result.item)
+        : result.kind === "cluster"
+          ? renderSearchClusterResult(result.item)
+          : renderSearchNodeResult(result.item);
+    searchResults.appendChild(element);
   });
 
   if (displayedResults.length < results.length) {
@@ -2912,8 +3300,8 @@ function setSearchSidebarCollapsed(collapsed) {
   appShell.classList.toggle("search-collapsed", collapsed);
   searchSidebar.classList.toggle("is-collapsed", collapsed);
   searchSidebarToggle.textContent = collapsed ? "<<" : ">>";
-  searchSidebarToggle.title = collapsed ? "光点検索を表示" : "光点検索を隠す";
-  searchSidebarToggle.setAttribute("aria-label", collapsed ? "光点検索を表示" : "光点検索を隠す");
+  searchSidebarToggle.title = collapsed ? "検索を表示" : "検索を隠す";
+  searchSidebarToggle.setAttribute("aria-label", collapsed ? "検索を表示" : "検索を隠す");
   searchSidebarToggle.setAttribute("aria-expanded", String(!collapsed));
   localStorage.setItem("textosphereSearchCollapsed", collapsed ? "1" : "0");
   requestAnimationFrame(() => {
@@ -2924,6 +3312,24 @@ function setSearchSidebarCollapsed(collapsed) {
 
 function toggleSearchSidebar() {
   setSearchSidebarCollapsed(!searchSidebar.classList.contains("is-collapsed"));
+}
+
+function setLeftSidebarCollapsed(collapsed) {
+  appShell.classList.toggle("sidebar-collapsed", collapsed);
+  leftSidebar.classList.toggle("is-collapsed", collapsed);
+  sidebarToggleButton.textContent = collapsed ? "メニュー" : "閉じる";
+  sidebarToggleButton.title = collapsed ? "左サイドバーを表示" : "左サイドバーを隠す";
+  sidebarToggleButton.setAttribute("aria-label", collapsed ? "左サイドバーを表示" : "左サイドバーを隠す");
+  sidebarToggleButton.setAttribute("aria-expanded", String(!collapsed));
+  localStorage.setItem("textosphereLeftSidebarCollapsed", collapsed ? "1" : "0");
+  requestAnimationFrame(() => {
+    resizeCanvas();
+    setTimeout(resizeCanvas, 180);
+  });
+}
+
+function toggleLeftSidebar() {
+  setLeftSidebarCollapsed(!leftSidebar.classList.contains("is-collapsed"));
 }
 
 function getOwnClusterListItems() {
@@ -2948,8 +3354,9 @@ function getClusterListItems(mode = activeClusterListMode) {
 
 function getClusterListDescription(cluster) {
   const description = truncateText(cluster.description || "\u8aac\u660e\u306a\u3057", activeClusterListMode === "followed" ? 28 : 34);
-  if (activeClusterListMode !== "followed") return description;
-  return `${getUserName(cluster.ownerUser)} / ${description}`;
+  const followerText = `フォロワー ${Number(cluster.followerCount || 0)}`;
+  if (activeClusterListMode !== "followed") return `${description} / ${followerText}`;
+  return `${getUserName(cluster.ownerUser)} / ${description} / ${followerText}`;
 }
 
 function updateClusterListTabs() {
@@ -3151,9 +3558,33 @@ function renderClusterOptions(selectedId = clusterInput.value || getPublicCluste
 }
 
 function updateClearLinksButton() {
-  const label = hiddenLinks !== null ? "線を戻す" : "線を消す";
-  clearLinksButton.title = label;
-  clearLinksButton.setAttribute("aria-label", label);
+  updateUniverseModeButton();
+}
+
+function updateUniverseModeButton() {
+  const isExplore = isExplorationMode();
+  const label = isExplore ? "文脈モードに切り替え" : "探索モードに切り替え";
+  universeModeButton.textContent = isExplore ? "探索" : "文脈";
+  universeModeButton.title = label;
+  universeModeButton.setAttribute("aria-label", label);
+  universeModeButton.classList.toggle("is-explore", isExplore);
+}
+
+function setUniverseMode(mode) {
+  universeMode = mode === UNIVERSE_MODES.explore ? UNIVERSE_MODES.explore : UNIVERSE_MODES.context;
+  localStorage.setItem(UNIVERSE_MODE_STORAGE_KEY, universeMode);
+  hiddenLinks = null;
+  const selectedNode = nodes.find((node) => node.id === selectedNodeId);
+  if (selectedNode && !canOpenNodeInUniverse(selectedNode)) {
+    selectedNodeId = null;
+  }
+  updateUniverseModeButton();
+  renderNodes();
+  drawLinks();
+}
+
+function toggleUniverseMode() {
+  setUniverseMode(isExplorationMode() ? UNIVERSE_MODES.context : UNIVERSE_MODES.explore);
 }
 
 function setPanelOpen(button, panel, isOpen) {
@@ -3293,8 +3724,8 @@ function animateNodePositionSnapshot(positionRows) {
     .map((node) => {
       const target = targetById.get(node.id);
       if (!target) return null;
-      const targetX = clamp(Number(target.x), NODE_DRAG_MIN_X, NODE_DRAG_MAX_X);
-      const targetY = clamp(Number(target.y), NODE_DRAG_MIN_Y, NODE_DRAG_MAX_Y);
+      const targetX = clamp(Number(target.x), nodeDragBounds.minX, nodeDragBounds.maxX);
+      const targetY = clamp(Number(target.y), nodeDragBounds.minY, nodeDragBounds.maxY);
       if (Math.hypot(targetX - node.x, targetY - node.y) < 0.01) return null;
       return {
         id: node.id,
@@ -3385,8 +3816,8 @@ function getDefaultSelection(type, body, duration) {
 function getNewNodePosition(originNode = null) {
   if (originNode) {
     return {
-      x: clamp(originNode.x + 12 + Math.random() * 8 - 4, NODE_DRAG_MIN_X, NODE_DRAG_MAX_X),
-      y: clamp(originNode.y + 10 + Math.random() * 8 - 4, NODE_DRAG_MIN_Y, NODE_DRAG_MAX_Y),
+      x: clamp(originNode.x + 12 + Math.random() * 8 - 4, nodeDragBounds.minX, nodeDragBounds.maxX),
+      y: clamp(originNode.y + 10 + Math.random() * 8 - 4, nodeDragBounds.minY, nodeDragBounds.maxY),
     };
   }
 
@@ -3544,6 +3975,12 @@ async function addCluster() {
 
 async function createLinkBetween(source, target, comment = "") {
   if (!source || !target || source === target) return false;
+  const sourceNode = nodes.find((node) => node.id === source);
+  const targetNode = nodes.find((node) => node.id === target);
+  const displayLayerContext = createNodeDisplayLayerContext();
+  if (!sourceNode || !targetNode || !canMoveOrConnectNode(sourceNode, displayLayerContext) || !canMoveOrConnectNode(targetNode, displayLayerContext)) {
+    return false;
+  }
 
   const currentLinks = hiddenLinks ?? links;
   const exists = currentLinks.some(
@@ -4014,6 +4451,18 @@ function renderDetailMeta(node) {
   `;
 }
 
+function updateClusterFollowerCount(clusterId, delta) {
+  const applyCount = (cluster) => {
+    if (cluster.id !== clusterId) return cluster;
+    return {
+      ...cluster,
+      followerCount: Math.max(0, Number(cluster.followerCount || 0) + delta),
+    };
+  };
+  clusters = clusters.map(applyCount);
+  clusterDirectory = clusterDirectory.map(applyCount);
+}
+
 async function setClusterFollow(clusterId, shouldFollow, checkbox = null) {
   const cluster = clusterDirectory.find((item) => item.id === clusterId) || clusters.find((item) => item.id === clusterId);
   if (currentUser && cluster?.ownerUserId === currentUser.id) {
@@ -4026,10 +4475,15 @@ async function setClusterFollow(clusterId, shouldFollow, checkbox = null) {
     return;
   }
 
+  const wasFollowed = followedClusterIds.has(clusterId);
+  const countDelta = shouldFollow === wasFollowed ? 0 : shouldFollow ? 1 : -1;
   if (shouldFollow) {
     followedClusterIds.add(clusterId);
   } else {
     followedClusterIds.delete(clusterId);
+  }
+  if (countDelta) {
+    updateClusterFollowerCount(clusterId, countDelta);
   }
 
   refreshScopeViews();
@@ -4048,6 +4502,9 @@ async function setClusterFollow(clusterId, shouldFollow, checkbox = null) {
       followedClusterIds.delete(clusterId);
     } else {
       followedClusterIds.add(clusterId);
+    }
+    if (countDelta) {
+      updateClusterFollowerCount(clusterId, -countDelta);
     }
     refreshScopeViews();
   }
@@ -4097,7 +4554,7 @@ function renderUserDetailPage(data) {
   const userClusters = data.clusters.map(normalizeCluster);
   const isCurrentUser = currentUser && user.id === currentUser.id;
   const userActions = isCurrentUser
-    ? `<div class="user-detail-actions"><button class="secondary-button user-detail-edit-profile" type="button">プロフィール編集</button><button class="secondary-button user-detail-logout" type="button">ログアウト</button><button class="danger-button user-detail-delete-user" type="button">ユーザー削除</button></div>`
+    ? `<div class="user-detail-actions"><button class="danger-button user-detail-delete-user" type="button">ユーザー削除</button><button class="secondary-button user-detail-edit-profile" type="button">プロフィール編集</button><button class="secondary-button user-detail-logout" type="button">ログアウト</button></div>`
     : `<div class="user-detail-actions"><button class="${
         data.blockedByCurrentUser ? "secondary-button" : "danger-button"
       } user-detail-block" type="button" data-user-id="${escapeHtml(user.id)}" data-blocked="${
@@ -5186,49 +5643,6 @@ function openDetail(id) {
   }
 }
 
-async function shuffleNodes() {
-  if (!currentUser || Number(currentUser.role) !== 1) return;
-
-  nodes = separateNodePositions(
-    nodes.map((node) => ({
-      ...node,
-      x: clamp(node.x + Math.random() * 18 - 9, 12, 88),
-      y: clamp(node.y + Math.random() * 18 - 9, 16, 84),
-    })),
-    120,
-  );
-
-  renderAll();
-
-  if (!apiAvailable) return;
-  try {
-    await Promise.all(
-      nodes.map((node) =>
-        apiRequest(`/nodes/${node.id}/position`, {
-          method: "PATCH",
-          body: JSON.stringify({ x: node.x, y: node.y }),
-        }),
-      ),
-    );
-  } catch (error) {
-    apiAvailable = false;
-  }
-}
-
-function clearLinks() {
-  if (hiddenLinks !== null) {
-    links = hiddenLinks;
-    hiddenLinks = null;
-  } else if (links.length > 0) {
-    hiddenLinks = links;
-    links = [];
-  }
-
-  renderStats();
-  updateClearLinksButton();
-  drawLinks();
-}
-
 typeInput.addEventListener("change", updateTypeFields);
 mediaFileInput.addEventListener("change", updateDurationFromMediaFile);
 bindMediaDropZone({
@@ -5305,14 +5719,14 @@ nodeListTabs.forEach((tab) => {
 clusterListTabs.forEach((tab) => {
   tab.addEventListener("click", () => setClusterListMode(tab.dataset.clusterListMode));
 });
-shuffleButton.addEventListener("click", shuffleNodes);
-clearLinksButton.addEventListener("click", clearLinks);
+universeModeButton.addEventListener("click", toggleUniverseMode);
 homeButton.addEventListener("click", moveUniverseToHome);
 saveHomeButton.addEventListener("click", saveCurrentHomeLocation);
 searchTypeInput.addEventListener("change", resetSearchResults);
 searchWordInput.addEventListener("input", resetSearchResults);
 searchSortInput.addEventListener("change", resetSearchResults);
 searchOrderInput.addEventListener("change", resetSearchResults);
+sidebarToggleButton.addEventListener("click", toggleLeftSidebar);
 searchSidebarToggle.addEventListener("click", toggleSearchSidebar);
 closeDialogButton.addEventListener("click", () => {
   closeDetailDialog();
@@ -5359,6 +5773,7 @@ markNotificationsReadButton?.addEventListener("click", markAllNotificationsRead)
 detailDialog.addEventListener("close", stopDetailPlayback);
 
 setSearchSidebarCollapsed(localStorage.getItem("textosphereSearchCollapsed") === "1");
+setLeftSidebarCollapsed(localStorage.getItem("textosphereLeftSidebarCollapsed") === "1");
 renderNotifications();
 updateTypeFields();
 if (authToken) {

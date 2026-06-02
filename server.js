@@ -13,12 +13,16 @@ const port = Number(process.env.PORT || 3000);
 const uploadDir = path.join(__dirname, "uploads");
 const publicClusterId = "00000000-0000-4000-8000-000000000001";
 const systemUserId = "00000000-0000-4000-8000-000000000002";
-const nodeDragBounds = {
+const defaultNodeDragBounds = {
   minX: -220,
   maxX: 320,
   minY: -220,
   maxY: 320,
 };
+let nodeDragBounds = { ...defaultNodeDragBounds };
+const universeExpansionBaseCount = 500;
+const universeExpansionBaseSpan = 500;
+const universeExpansionCenter = 50;
 const megaCoordinateScale = 10;
 const megaClusterRadius = { initialPx: 500, minPx: 200, maxPx: 1000 };
 const megaClusterStrength = { initialPx: 2, minPx: 1, maxPx: 5 };
@@ -386,6 +390,44 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(value, max));
 }
 
+function getUniverseExpansionStageForCount(count) {
+  const safeCount = Math.max(0, Number(count) || 0);
+  if (safeCount <= universeExpansionBaseCount) return 0;
+  return Math.max(1, Math.ceil(Math.log2(safeCount / universeExpansionBaseCount)));
+}
+
+function getUniverseBoundsForStage(stage) {
+  const safeStage = Math.max(0, Number(stage) || 0);
+  if (safeStage === 0) return { ...defaultNodeDragBounds };
+  const edge = universeExpansionBaseSpan * 2 ** (safeStage - 1);
+  return {
+    minX: -edge,
+    maxX: edge + 100,
+    minY: -edge,
+    maxY: edge + 100,
+  };
+}
+
+function normalizeUniverseBounds(row) {
+  if (!row) return { stage: 0, ...defaultNodeDragBounds };
+  return {
+    stage: Number(row.expansion_stage || 0),
+    minX: Number(row.min_x),
+    maxX: Number(row.max_x),
+    minY: Number(row.min_y),
+    maxY: Number(row.max_y),
+  };
+}
+
+function setRuntimeUniverseBounds(bounds) {
+  nodeDragBounds = {
+    minX: Number(bounds.minX),
+    maxX: Number(bounds.maxX),
+    minY: Number(bounds.minY),
+    maxY: Number(bounds.maxY),
+  };
+}
+
 function pxToCoord(px) {
   return Number(px) / megaCoordinateScale;
 }
@@ -489,6 +531,7 @@ function toPublicUser(row) {
     userName: row.display_name || row.user_identifier,
     profileIcon: row.profile_icon || "",
     bio: row.bio || "",
+    createdAt: row.created_at,
   };
 }
 
@@ -796,6 +839,7 @@ function toCluster(row) {
     ownerUserId: row.owner_user_id,
     name: row.name,
     description: row.description || "",
+    followerCount: Number(row.follower_count || 0),
     createdAt: row.created_at,
   };
 }
@@ -1076,19 +1120,20 @@ function countKeywordOccurrences(text, keyword) {
   return count;
 }
 
-async function getSourceMegaClusterIds(originNodeId) {
-  if (!originNodeId) return [];
+async function getSourceMegaClusterIds(originNodeIds, db = pool) {
+  const ids = (Array.isArray(originNodeIds) ? originNodeIds : [originNodeIds]).filter(Boolean);
+  if (ids.length === 0) return [];
 
-  const sourceMegaClusterIds = [];
-  if (originNodeId) {
-    const { rows } = await pool.query(
-      "select mega_cluster_id from node_mega_clusters where node_id = $1",
-      [originNodeId],
-    );
-    rows.forEach((row) => sourceMegaClusterIds.push(Number(row.mega_cluster_id)));
-  }
+  const { rows } = await db.query(
+    "select distinct mega_cluster_id from node_mega_clusters where node_id = any($1::uuid[])",
+    [ids],
+  );
+  return rows.map((row) => Number(row.mega_cluster_id)).filter((id) => Number.isInteger(id));
+}
 
-  return sourceMegaClusterIds;
+async function getIncomingSourceNodeIds(nodeId, db = pool) {
+  const { rows } = await db.query("select source_node_id from links where target_node_id = $1", [nodeId]);
+  return rows.map((row) => row.source_node_id).filter(Boolean);
 }
 
 function classifyNodeMegaClustersByKeywords({ title, body, clusterDescription, sourceMegaClusterIds = [] }) {
@@ -1254,15 +1299,17 @@ async function classifyNodeMegaClustersWithLlm({ title, body, clusterDescription
   }
 }
 
-async function classifyNodeMegaClusters({ title, body, clusterDescription, originNodeId }) {
-  const sourceMegaClusterIds = await getSourceMegaClusterIds(originNodeId);
+async function classifyNodeMegaClusters({ title, body, clusterDescription, originNodeId, sourceMegaClusterIds = null }) {
+  const contextSourceMegaClusterIds = Array.isArray(sourceMegaClusterIds)
+    ? sourceMegaClusterIds
+    : await getSourceMegaClusterIds(originNodeId);
 
   try {
     const llmAssignments = await classifyNodeMegaClustersWithLlm({
       title,
       body,
       clusterDescription,
-      sourceMegaClusterIds,
+      sourceMegaClusterIds: contextSourceMegaClusterIds,
     });
     if (llmAssignments) return llmAssignments;
   } catch (error) {
@@ -1273,8 +1320,37 @@ async function classifyNodeMegaClusters({ title, body, clusterDescription, origi
     title,
     body,
     clusterDescription,
+    sourceMegaClusterIds: contextSourceMegaClusterIds,
+  });
+}
+
+async function reclassifyNodeMegaClusters(db, nodeId, { originNodeIds = [], includeIncomingSources = false } = {}) {
+  const { rows } = await db.query(
+    `
+      select nodes.title,
+             nodes.body,
+             coalesce(clusters.description, '') as cluster_description
+      from nodes
+      left join clusters on clusters.id = nodes.cluster_id
+      where nodes.id = $1
+    `,
+    [nodeId],
+  );
+  if (rows.length === 0) return [];
+
+  const sourceNodeIds = [...(Array.isArray(originNodeIds) ? originNodeIds : [originNodeIds]).filter(Boolean)];
+  if (includeIncomingSources) {
+    sourceNodeIds.push(...(await getIncomingSourceNodeIds(nodeId, db)));
+  }
+  const sourceMegaClusterIds = await getSourceMegaClusterIds([...new Set(sourceNodeIds)], db);
+  const assignments = await classifyNodeMegaClusters({
+    title: rows[0].title,
+    body: rows[0].body,
+    clusterDescription: rows[0].cluster_description,
     sourceMegaClusterIds,
   });
+  await replaceNodeMegaClusters(db, nodeId, assignments);
+  return assignments;
 }
 
 async function replaceNodeMegaClusters(client, nodeId, assignments) {
@@ -1480,6 +1556,28 @@ async function initDb() {
   await pool.query("alter table nodes add column if not exists media_mime text");
   await pool.query("alter table nodes add column if not exists media_name text");
   await pool.query("alter table nodes add column if not exists share_enabled boolean not null default true");
+  await pool.query("alter table nodes alter column x type numeric(10, 2)");
+  await pool.query("alter table nodes alter column y type numeric(10, 2)");
+  await pool.query(`
+    create table if not exists universe_settings (
+      id boolean primary key default true check (id),
+      expansion_stage integer not null default 0,
+      min_x numeric(10, 2) not null default -220,
+      max_x numeric(10, 2) not null default 320,
+      min_y numeric(10, 2) not null default -220,
+      max_y numeric(10, 2) not null default 320,
+      expanded_at timestamptz,
+      updated_at timestamptz not null default now()
+    )
+  `);
+  await pool.query(
+    `
+      insert into universe_settings (id, expansion_stage, min_x, max_x, min_y, max_y)
+      values (true, 0, $1, $2, $3, $4)
+      on conflict (id) do nothing
+    `,
+    [defaultNodeDragBounds.minX, defaultNodeDragBounds.maxX, defaultNodeDragBounds.minY, defaultNodeDragBounds.maxY],
+  );
   await pool.query(`
     create table if not exists mega_clusters (
       id integer primary key check (id between 0 and 21),
@@ -1588,6 +1686,10 @@ async function initDb() {
     on user_space_homes (user_id)
     where is_primary
   `);
+  await pool.query("alter table mega_clusters alter column center_x type numeric(10, 2)");
+  await pool.query("alter table mega_clusters alter column center_y type numeric(10, 2)");
+  await pool.query("alter table user_space_homes alter column x type numeric(12, 4)");
+  await pool.query("alter table user_space_homes alter column y type numeric(12, 4)");
   await pool.query(`
     do $$
     declare
@@ -1679,7 +1781,10 @@ async function initDb() {
   `);
 
   const { rows } = await pool.query("select count(*)::int as count from nodes");
-  if (rows[0].count > 0) return;
+  if (rows[0].count > 0) {
+    await maybeExpandUniverse();
+    return;
+  }
 
   const client = await pool.connect();
   try {
@@ -1720,6 +1825,88 @@ async function initDb() {
     throw error;
   } finally {
     client.release();
+  }
+  await maybeExpandUniverse();
+}
+
+let universeExpansionRunning = false;
+
+async function maybeExpandUniverse() {
+  if (universeExpansionRunning) return;
+  universeExpansionRunning = true;
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const settingsResult = await client.query("select * from universe_settings where id = true for update");
+    const currentBounds = normalizeUniverseBounds(settingsResult.rows[0]);
+    const countResult = await client.query("select count(*)::int as count from nodes");
+    const nodeCount = Number(countResult.rows[0]?.count || 0);
+    const targetStage = getUniverseExpansionStageForCount(nodeCount);
+
+    if (targetStage <= currentBounds.stage) {
+      setRuntimeUniverseBounds(currentBounds);
+      await client.query("commit");
+      return;
+    }
+
+    const targetBounds = getUniverseBoundsForStage(targetStage);
+    const currentWidth = Math.max(1, currentBounds.maxX - currentBounds.minX);
+    const targetWidth = Math.max(1, targetBounds.maxX - targetBounds.minX);
+    const scale = targetWidth / currentWidth;
+
+    await client.query(
+      `
+        update nodes
+        set x = round(($1::numeric + (x - $1::numeric) * $2::numeric), 2),
+            y = round(($1::numeric + (y - $1::numeric) * $2::numeric), 2),
+            updated_at = now()
+      `,
+      [universeExpansionCenter, scale],
+    );
+    await client.query(
+      `
+        update mega_clusters
+        set center_x = round(($1::numeric + (center_x - $1::numeric) * $2::numeric), 2),
+            center_y = round(($1::numeric + (center_y - $1::numeric) * $2::numeric), 2),
+            updated_at = now()
+      `,
+      [universeExpansionCenter, scale],
+    );
+    await client.query(
+      `
+        update user_space_homes
+        set x = round(($1::numeric + (x - $1::numeric) * $2::numeric), 4),
+            y = round(($1::numeric + (y - $1::numeric) * $2::numeric), 4),
+            updated_at = now()
+      `,
+      [universeExpansionCenter, scale],
+    );
+    await client.query(
+      `
+        update universe_settings
+        set expansion_stage = $1,
+            min_x = $2,
+            max_x = $3,
+            min_y = $4,
+            max_y = $5,
+            expanded_at = now(),
+            updated_at = now()
+        where id = true
+      `,
+      [targetStage, targetBounds.minX, targetBounds.maxX, targetBounds.minY, targetBounds.maxY],
+    );
+
+    await client.query("commit");
+    setRuntimeUniverseBounds({ stage: targetStage, ...targetBounds });
+    console.log(
+      `Universe expanded to stage ${targetStage} for ${nodeCount} nodes: x ${targetBounds.minX}..${targetBounds.maxX}, y ${targetBounds.minY}..${targetBounds.maxY}`,
+    );
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    console.error("Universe expansion failed", error);
+  } finally {
+    client.release();
+    universeExpansionRunning = false;
   }
 }
 
@@ -2014,8 +2201,23 @@ app.get("/api/state", requireAuth, async (req, res, next) => {
       followResult,
       homeResult,
       megaClusterResult,
+      userDirectoryResult,
     ] = await Promise.all([
-      pool.query("select * from clusters where owner_user_id = $1 order by created_at asc", [req.user.id]),
+      pool.query(
+        `
+          select clusters.*,
+                 coalesce(cluster_follow_counts.follower_count, 0)::int as follower_count
+          from clusters
+          left join (
+            select cluster_id, count(*)::int as follower_count
+            from cluster_follows
+            group by cluster_id
+          ) cluster_follow_counts on cluster_follow_counts.cluster_id = clusters.id
+          where clusters.owner_user_id = $1
+          order by clusters.created_at asc
+        `,
+        [req.user.id],
+      ),
       pool.query(
         `
           select nodes.*,
@@ -2055,9 +2257,15 @@ app.get("/api/state", requireAuth, async (req, res, next) => {
         select clusters.*,
                users.user_identifier as owner_user_identifier,
                users.display_name as owner_display_name,
-               users.profile_icon as owner_profile_icon
+               users.profile_icon as owner_profile_icon,
+               coalesce(cluster_follow_counts.follower_count, 0)::int as follower_count
         from clusters
         left join users on users.id = clusters.owner_user_id
+        left join (
+          select cluster_id, count(*)::int as follower_count
+          from cluster_follows
+          group by cluster_id
+        ) cluster_follow_counts on cluster_follow_counts.cluster_id = clusters.id
         order by clusters.created_at asc
       `),
       pool.query("select cluster_id from cluster_follows where user_id = $1", [req.user.id]),
@@ -2067,6 +2275,7 @@ app.get("/api/state", requireAuth, async (req, res, next) => {
       Number(req.user.role) === 1
         ? pool.query("select * from mega_clusters order by id asc")
         : Promise.resolve({ rows: [] }),
+      pool.query("select id, user_identifier, display_name, profile_icon, bio, created_at from users where login_allowed = true order by created_at asc"),
     ]);
 
     res.json({
@@ -2076,6 +2285,8 @@ app.get("/api/state", requireAuth, async (req, res, next) => {
       followedClusterIds: followResult.rows.map((row) => row.cluster_id),
       homeLocation: toSpaceHome(homeResult.rows[0]),
       megaClusters: megaClusterResult.rows.map(toMegaCluster),
+      universeBounds: { ...nodeDragBounds },
+      users: userDirectoryResult.rows.map(toPublicUser),
       nodes: nodeResult.rows.map(toNode),
       links: linkResult.rows.map(toLink),
     });
@@ -2866,6 +3077,7 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
       originNodeId,
     });
     await replaceNodeMegaClusters(pool, rows[0].id, assignments);
+    await maybeExpandUniverse();
 
     res.status(201).json((await getNodeForResponse(rows[0].id, req.user.id)) || toNode(rows[0]));
   } catch (error) {
@@ -2972,6 +3184,7 @@ app.patch("/api/nodes/:id/cluster", requireAuth, async (req, res, next) => {
       `,
       [req.params.id, clusterRows[0].id],
     );
+    await reclassifyNodeMegaClusters(pool, req.params.id, { includeIncomingSources: true });
 
     res.json(await getNodeForResponse(req.params.id, req.user.id));
   } catch (error) {
@@ -3080,6 +3293,7 @@ app.post("/api/links", requireAuth, async (req, res, next) => {
     }
 
     await createLinkNotifications(pool, rows[0], req.user.id);
+    await reclassifyNodeMegaClusters(pool, target, { originNodeIds: [source] });
     res.status(201).json(toLink(rows[0]));
   } catch (error) {
     next(error);
