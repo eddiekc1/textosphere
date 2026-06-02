@@ -20,6 +20,12 @@ const currentUserIcon = document.querySelector("#currentUserIcon");
 const currentUserId = document.querySelector("#currentUserId");
 const currentUserBio = document.querySelector("#currentUserBio");
 const userSummaryButton = document.querySelector("#userSummaryButton");
+const notificationTriggerButton = document.querySelector("#notificationTriggerButton");
+const notificationCount = document.querySelector("#notificationCount");
+const notificationDialog = document.querySelector("#notificationDialog");
+const closeNotificationDialogButton = document.querySelector("#closeNotificationDialogButton");
+const notificationList = document.querySelector("#notificationList");
+const markNotificationsReadButton = document.querySelector("#markNotificationsReadButton");
 const linkCommentTooltip = document.querySelector("#linkCommentTooltip");
 const canvas = document.querySelector("#threadCanvas");
 const ctx = canvas.getContext("2d");
@@ -75,6 +81,10 @@ const closeDialogButton = document.querySelector("#closeDialogButton");
 const detailType = document.querySelector("#detailType");
 const detailTitle = document.querySelector("#detailTitle");
 const detailContent = document.querySelector("#detailContent");
+const shareDialog = document.querySelector("#shareDialog");
+const closeShareDialogButton = document.querySelector("#closeShareDialogButton");
+const shareDialogTitle = document.querySelector("#shareDialogTitle");
+const shareDialogContent = document.querySelector("#shareDialogContent");
 const connectionDialog = document.querySelector("#connectionDialog");
 const closeConnectionDialogButton = document.querySelector("#closeConnectionDialogButton");
 const connectionType = document.querySelector("#connectionType");
@@ -103,6 +113,7 @@ const closeClusterNodesDialogButton = document.querySelector("#closeClusterNodes
 const clusterNodesType = document.querySelector("#clusterNodesType");
 const clusterNodesTitle = document.querySelector("#clusterNodesTitle");
 const clusterNodesMeta = document.querySelector("#clusterNodesMeta");
+const clusterNodesActions = document.querySelector("#clusterNodesActions");
 const clusterNodesContent = document.querySelector("#clusterNodesContent");
 const nodeProcessingDialog = document.querySelector("#nodeProcessingDialog");
 const nodeProcessingMessage = document.querySelector("#nodeProcessingMessage");
@@ -156,8 +167,12 @@ const TEMPORARY_NODE_LIMIT = 5;
 const MIN_UNIVERSE_ZOOM = 0.45;
 const MAX_UNIVERSE_ZOOM = 2.6;
 const STATE_REFRESH_MS = 30_000;
+const NOTIFICATION_REFRESH_MS = 30_000;
+const NOTIFICATION_PAGE_SIZE = 20;
 const NODE_POSITION_REFRESH_MS = 20_000;
 const NODE_POSITION_ANIMATION_MS = 1_800;
+const MEGA_CLUSTER_VISUAL_SCALE = 0.72;
+const NEW_NODE_HIGHLIGHT_MS = 6_500;
 const NODE_DRAG_MIN_X = -220;
 const NODE_DRAG_MAX_X = 320;
 const NODE_DRAG_MIN_Y = -220;
@@ -209,6 +224,8 @@ let currentHomeLocation = null;
 let viewportPositionedNodeIds = new Set();
 let stateRefreshTimer = null;
 let stateRefreshInFlight = false;
+let notificationRefreshTimer = null;
+let notificationRefreshInFlight = false;
 let nodePositionRefreshTimer = null;
 let nodePositionAnimationFrame = null;
 let authToken = localStorage.getItem("textosphereToken") || "";
@@ -223,6 +240,11 @@ let clusters = [
 ];
 let clusterDirectory = [...clusters];
 let followedClusterIds = new Set();
+let megaClusters = [];
+const highlightedNewNodeIds = new Map();
+let notifications = [];
+let unreadNotificationCount = 0;
+let hasMoreNotifications = false;
 let nodes = [
   {
     id: createClientId(),
@@ -691,6 +713,23 @@ function renderLinkPreviewContent(preview) {
   `;
 }
 
+function renderLinkPreviewFallback(url) {
+  const safeUrl = getSafeResourceUrl(url, { allowRelative: false, allowBlob: false }) || url;
+  let siteName = "";
+  try {
+    siteName = new URL(safeUrl).hostname.replace(/^www\./, "");
+  } catch (error) {
+    siteName = "link";
+  }
+  return `
+    <span class="link-preview-image" aria-hidden="true"></span>
+    <span class="link-preview-main">
+      <span class="link-preview-site">${escapeHtml(siteName)}</span>
+      <span class="link-preview-title">${escapeHtml(safeUrl)}</span>
+    </span>
+  `;
+}
+
 async function loadLinkPreviews(container) {
   const cards = Array.from(container.querySelectorAll(".link-preview-card[data-link-preview-url]"));
   await Promise.all(
@@ -703,8 +742,10 @@ async function loadLinkPreviews(container) {
         }
         const preview = await linkPreviewCache.get(url);
         if (!preview || !card.isConnected) {
-          if (!preview) linkPreviewCache.delete(url);
-          card.remove();
+          if (!card.isConnected) return;
+          card.classList.remove("is-loading");
+          card.classList.add("is-fallback");
+          card.innerHTML = renderLinkPreviewFallback(url);
           return;
         }
         const href = getSafeResourceUrl(preview.finalUrl || preview.url, { allowRelative: false, allowBlob: false });
@@ -713,7 +754,10 @@ async function loadLinkPreviews(container) {
         card.innerHTML = renderLinkPreviewContent(preview);
       } catch (error) {
         linkPreviewCache.delete(url);
-        card.remove();
+        if (!card.isConnected) return;
+        card.classList.remove("is-loading");
+        card.classList.add("is-fallback");
+        card.innerHTML = renderLinkPreviewFallback(url);
       }
     }),
   );
@@ -798,6 +842,7 @@ function setAuthenticatedView(user) {
   authShell.hidden = true;
   appShell.hidden = false;
   startStateRefresh();
+  startNotificationRefresh();
   startNodePositionRefresh();
   shuffleButton.hidden = Number(user.role) !== 1;
   currentUserId.textContent = getUserName(user);
@@ -821,6 +866,7 @@ function showAuth() {
   currentUser = null;
   currentHomeLocation = null;
   stopStateRefresh();
+  stopNotificationRefresh();
   stopNodePositionRefresh();
   updateHomeControls();
   shuffleButton.hidden = true;
@@ -1044,6 +1090,7 @@ function normalizeNode(node) {
     mediaUrl: node.mediaUrl || null,
     mediaMime: node.mediaMime || null,
     mediaName: node.mediaName || null,
+    shareEnabled: node.shareEnabled !== false,
     megaClusterIds: Array.isArray(node.megaClusterIds) ? node.megaClusterIds.map((id) => Number(id)) : [],
     likeCount: Number(node.likeCount || 0),
     likedByCurrentUser: Boolean(node.likedByCurrentUser),
@@ -1095,6 +1142,29 @@ function normalizeHomeLocation(home) {
   };
 }
 
+function normalizeNotification(notification) {
+  return {
+    ...notification,
+    actorUser: notification.actorUser || null,
+    node: notification.node || null,
+    relatedNode: notification.relatedNode || null,
+    cluster: notification.cluster || null,
+    readAt: notification.readAt || null,
+    createdAt: notification.createdAt || new Date().toISOString(),
+  };
+}
+
+function normalizeMegaCluster(cluster) {
+  return {
+    id: Number(cluster.id),
+    name: String(cluster.name || `Mega ${cluster.id}`),
+    centerX: Number(cluster.centerX || 0),
+    centerY: Number(cluster.centerY || 0),
+    radius: Math.max(0, Number(cluster.radius || 0)),
+    strength: Number(cluster.strength || 0),
+  };
+}
+
 function ensurePublicCluster(items) {
   const normalized = items.map(normalizeCluster);
   if (normalized.some((cluster) => cluster.id === PUBLIC_CLUSTER_ID || cluster.name === "Public")) {
@@ -1136,11 +1206,13 @@ async function loadState() {
     clusters = ensurePublicCluster(state.clusters || []);
     clusterDirectory = ensurePublicCluster(state.clusterDirectory || state.clusters || []);
     followedClusterIds = new Set(state.followedClusterIds || []);
+    megaClusters = Number(state.currentUser?.role || currentUser?.role) === 1 ? (state.megaClusters || []).map(normalizeMegaCluster) : [];
     nodes = state.nodes.map(normalizeNode);
     links = state.links.map(normalizeLink);
     hiddenLinks = null;
     temporaryNodeIds.clear();
     apiAvailable = true;
+    refreshNotifications();
   } catch (error) {
     apiAvailable = false;
     currentHomeLocation = null;
@@ -1168,6 +1240,7 @@ function applyRemoteState(state) {
   clusters = ensurePublicCluster(state.clusters || []);
   clusterDirectory = ensurePublicCluster(state.clusterDirectory || state.clusters || []);
   followedClusterIds = new Set(state.followedClusterIds || []);
+  megaClusters = Number(currentUser?.role) === 1 ? (state.megaClusters || []).map(normalizeMegaCluster) : [];
   nodes = nextNodes;
 
   if (keepLinksHidden) {
@@ -1233,6 +1306,214 @@ function stopStateRefresh() {
     stateRefreshTimer = null;
   }
   stateRefreshInFlight = false;
+}
+
+function getNotificationMessage(notification) {
+  const actorName = notification.actorUser ? getUserName(notification.actorUser) : "誰か";
+  if (notification.type === "node_link") {
+    const nodeTitle = notification.node?.title || "あなたの光点";
+    const relatedTitle = notification.relatedNode?.title || "別の光点";
+    return `${actorName}さんが「${relatedTitle}」から「${nodeTitle}」へ接続しました`;
+  }
+  if (notification.type === "node_like") {
+    return `${actorName}さんが「${notification.node?.title || "あなたの光点"}」にLikeしました`;
+  }
+  if (notification.type === "node_favorite") {
+    return `${actorName}さんが「${notification.node?.title || "あなたの光点"}」をお気に入りに追加しました`;
+  }
+  if (notification.type === "cluster_follow") {
+    return `${actorName}さんがクラスタ「${notification.cluster?.name || "あなたのクラスタ"}」をフォローしました`;
+  }
+  return "新しい通知があります";
+}
+
+function getNotificationTargetLabel(notification) {
+  if (notification.node?.id) return "光点を開く";
+  if (notification.cluster?.id) return "クラスタを開く";
+  return "";
+}
+
+function renderNotificationActor(notification) {
+  const actorName = notification.actorUser ? getUserName(notification.actorUser) : "誰か";
+  if (!notification.actorUser?.id) {
+    return `<span class="notification-actor-text">${escapeHtml(actorName)}</span>`;
+  }
+  return `<button class="notification-actor" type="button" data-user-id="${escapeHtml(notification.actorUser.id)}">${escapeHtml(actorName)}</button>`;
+}
+
+function renderNotificationMessage(notification) {
+  const actor = renderNotificationActor(notification);
+  if (notification.type === "node_link") {
+    const nodeTitle = notification.node?.title || "あなたの光点";
+    const relatedTitle = notification.relatedNode?.title || "別の光点";
+    return `${actor}<span>さんが「${escapeHtml(relatedTitle)}」から「${escapeHtml(nodeTitle)}」へ接続しました</span>`;
+  }
+  if (notification.type === "node_like") {
+    return `${actor}<span>さんが「${escapeHtml(notification.node?.title || "あなたの光点")}」にLikeしました</span>`;
+  }
+  if (notification.type === "node_favorite") {
+    return `${actor}<span>さんが「${escapeHtml(notification.node?.title || "あなたの光点")}」をお気に入りに追加しました</span>`;
+  }
+  if (notification.type === "cluster_follow") {
+    return `${actor}<span>さんがクラスタ「${escapeHtml(notification.cluster?.name || "あなたのクラスタ")}」をフォローしました</span>`;
+  }
+  return `<span>新しい通知があります</span>`;
+}
+
+function renderNotifications() {
+  if (!notificationCount || !notificationTriggerButton || !notificationList || !markNotificationsReadButton) return;
+  notificationCount.textContent = String(unreadNotificationCount);
+  notificationTriggerButton.classList.toggle("has-unread", unreadNotificationCount > 0);
+  markNotificationsReadButton.disabled = unreadNotificationCount === 0 || notifications.length === 0;
+  if (notifications.length === 0) {
+    notificationList.innerHTML = `<p class="notification-empty">通知はまだありません</p>`;
+    return;
+  }
+
+  const itemsMarkup = notifications
+    .map((notification) => {
+      const unread = notification.readAt ? "" : " is-unread";
+      const targetLabel = getNotificationTargetLabel(notification);
+      return `
+        <article class="notification-item${unread}" data-notification-id="${escapeHtml(notification.id)}">
+          <p class="notification-message">${renderNotificationMessage(notification)}</p>
+          <span class="notification-meta">
+            ${escapeHtml(formatDateTime(notification.createdAt) || "-")}
+          </span>
+          ${targetLabel ? `<button class="notification-target" type="button" data-notification-id="${escapeHtml(notification.id)}">${escapeHtml(targetLabel)}</button>` : ""}
+        </article>
+      `;
+    })
+    .join("");
+  const moreMarkup = hasMoreNotifications
+    ? `<button class="notification-more" type="button" aria-label="次の20件を表示">▽</button>`
+    : "";
+  notificationList.innerHTML = `${itemsMarkup}${moreMarkup}`;
+
+  notificationList.querySelectorAll(".notification-target").forEach((button) => {
+    button.addEventListener("click", () => openNotification(button.dataset.notificationId));
+  });
+  notificationList.querySelectorAll(".notification-actor").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const notificationItem = button.closest(".notification-item");
+      const notificationId = notificationItem?.dataset.notificationId;
+      if (notificationId) {
+        await markNotificationRead(notificationId);
+      }
+      closeNotificationDialog();
+      openUserDetail(button.dataset.userId);
+    });
+  });
+  notificationList.querySelector(".notification-more")?.addEventListener("click", loadMoreNotifications);
+}
+
+async function loadNotificationsPage({ append = false } = {}) {
+  if (!currentUser || !apiAvailable || notificationRefreshInFlight) return;
+  notificationRefreshInFlight = true;
+  try {
+    const offset = append ? notifications.length : 0;
+    const limit = append ? NOTIFICATION_PAGE_SIZE : Math.max(NOTIFICATION_PAGE_SIZE, notifications.length || NOTIFICATION_PAGE_SIZE);
+    const result = await apiRequest(`/notifications?limit=${limit}&offset=${offset}`);
+    const nextNotifications = (result.notifications || []).map(normalizeNotification);
+    if (append) {
+      const existingIds = new Set(notifications.map((notification) => notification.id));
+      notifications = [...notifications, ...nextNotifications.filter((notification) => !existingIds.has(notification.id))];
+    } else {
+      notifications = nextNotifications;
+    }
+    unreadNotificationCount = Number(result.unreadCount || 0);
+    hasMoreNotifications = Boolean(result.hasMore);
+    renderNotifications();
+  } catch (error) {
+    if (error.status !== 401) {
+      console.warn("Notification refresh failed", error);
+    }
+  } finally {
+    notificationRefreshInFlight = false;
+  }
+}
+
+async function refreshNotifications() {
+  await loadNotificationsPage({ append: false });
+}
+
+async function loadMoreNotifications() {
+  await loadNotificationsPage({ append: true });
+}
+
+function startNotificationRefresh() {
+  if (notificationRefreshTimer !== null) return;
+  notificationRefreshTimer = setInterval(refreshNotifications, NOTIFICATION_REFRESH_MS);
+}
+
+function stopNotificationRefresh() {
+  if (notificationRefreshTimer !== null) {
+    clearInterval(notificationRefreshTimer);
+    notificationRefreshTimer = null;
+  }
+  notificationRefreshInFlight = false;
+  notifications = [];
+  unreadNotificationCount = 0;
+  hasMoreNotifications = false;
+  renderNotifications();
+}
+
+async function markNotificationRead(notificationId) {
+  const notification = notifications.find((item) => item.id === notificationId);
+  if (!notification || notification.readAt) return;
+  notification.readAt = new Date().toISOString();
+  unreadNotificationCount = Math.max(0, unreadNotificationCount - 1);
+  renderNotifications();
+  if (!apiAvailable) return;
+  try {
+    await apiRequest(`/notifications/${notificationId}/read`, { method: "PATCH" });
+  } catch (error) {
+    refreshNotifications();
+  }
+}
+
+async function markAllNotificationsRead() {
+  if (notifications.length === 0 || unreadNotificationCount === 0) return;
+  const readAt = new Date().toISOString();
+  notifications = notifications.map((notification) => ({ ...notification, readAt: notification.readAt || readAt }));
+  unreadNotificationCount = 0;
+  renderNotifications();
+  if (!apiAvailable) return;
+  try {
+    await apiRequest("/notifications/read-all", { method: "POST" });
+  } catch (error) {
+    refreshNotifications();
+  }
+}
+
+function openNotification(notificationId) {
+  const notification = notifications.find((item) => item.id === notificationId);
+  if (!notification) return;
+  markNotificationRead(notificationId);
+  closeNotificationDialog();
+  if (notification.node?.id) {
+    selectedNodeId = notification.node.id;
+    updateSelectedNodeClass(notification.node.id);
+    centerUniverseOnNode(notification.node.id);
+    openDetail(notification.node.id);
+    return;
+  }
+  if (notification.cluster?.id) {
+    openClusterNodesDialog(notification.cluster.id);
+  }
+}
+
+function openNotificationDialog() {
+  refreshNotifications();
+  if (notificationDialog && !notificationDialog.open) {
+    notificationDialog.showModal();
+  }
+}
+
+function closeNotificationDialog() {
+  if (notificationDialog?.open) {
+    notificationDialog.close();
+  }
 }
 
 function getMapRect() {
@@ -1583,12 +1864,58 @@ function drawSourceArrow(source, from, controlFrom, controlTo, to) {
   ctx.shadowBlur = 0;
 }
 
+function getMegaClusterPoint(cluster) {
+  return {
+    x: cluster.centerX * MEGA_CLUSTER_VISUAL_SCALE * universeZoom + universePan.x,
+    y: cluster.centerY * MEGA_CLUSTER_VISUAL_SCALE * universeZoom + universePan.y,
+  };
+}
+
+function drawMegaClusterGuides() {
+  if (!currentUser || Number(currentUser.role) !== 1 || megaClusters.length === 0) return;
+
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  megaClusters.forEach((cluster) => {
+    const center = getMegaClusterPoint(cluster);
+    const radius = Math.max(12, cluster.radius * MEGA_CLUSTER_VISUAL_SCALE * universeZoom);
+    const hue = (cluster.id * 47) % 360;
+    const stroke = `hsla(${hue}, 92%, 70%, 0.24)`;
+    const fill = `hsla(${hue}, 92%, 60%, 0.045)`;
+
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = fill;
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = Math.max(1, 1.2 * clamp(universeZoom, 0.55, 1.8));
+    ctx.setLineDash([8, 10]);
+    ctx.fill();
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${hue}, 92%, 76%, 0.62)`;
+    ctx.shadowColor = `hsla(${hue}, 92%, 72%, 0.72)`;
+    ctx.shadowBlur = 12;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.font = "11px Inter, system-ui, sans-serif";
+    ctx.fillStyle = "rgba(246, 251, 255, 0.52)";
+    ctx.fillText(cluster.name, center.x, center.y - Math.min(radius + 13, 42));
+  });
+  ctx.restore();
+}
+
 function drawLinks() {
   const rect = getMapRect();
   ctx.clearRect(0, 0, rect.width, rect.height);
   ctx.lineCap = "round";
   ctx.textBaseline = "middle";
   linkCommentHitboxes = [];
+  drawMegaClusterGuides();
 
   links.forEach((link) => {
     const source = nodes.find((node) => node.id === link.source);
@@ -1654,6 +1981,25 @@ function drawLinks() {
   });
 }
 
+function highlightNewNode(id) {
+  if (!id) return;
+  highlightedNewNodeIds.set(id, Date.now() + NEW_NODE_HIGHLIGHT_MS);
+  setTimeout(() => {
+    const expiresAt = highlightedNewNodeIds.get(id);
+    if (!expiresAt || expiresAt > Date.now()) return;
+    highlightedNewNodeIds.delete(id);
+    document.querySelector(`.node[data-node-id="${CSS.escape(id)}"]`)?.classList.remove("is-newly-created");
+  }, NEW_NODE_HIGHLIGHT_MS + 80);
+}
+
+function isNewNodeHighlighted(id) {
+  const expiresAt = highlightedNewNodeIds.get(id);
+  if (!expiresAt) return false;
+  if (expiresAt > Date.now()) return true;
+  highlightedNewNodeIds.delete(id);
+  return false;
+}
+
 function renderNodes() {
   nodesLayer.innerHTML = "";
 
@@ -1661,7 +2007,7 @@ function renderNodes() {
     const isInVisibleScope = isNodeInVisibleScope(node);
     const point = getNodePoint(node);
     const button = document.createElement("button");
-    button.className = `node ${isInVisibleScope ? getNodeGlowClass(node.id) : "node-glow-muted node-out-of-scope"}${node.id === selectedNodeId ? " is-selected" : ""}`;
+    button.className = `node ${isInVisibleScope ? getNodeGlowClass(node.id) : "node-glow-muted node-out-of-scope"}${node.id === selectedNodeId ? " is-selected" : ""}${isNewNodeHighlighted(node.id) ? " is-newly-created" : ""}`;
     button.type = "button";
     button.style.left = `${point.x}px`;
     button.style.top = `${point.y}px`;
@@ -2660,6 +3006,26 @@ function getClusterById(id) {
   return clusters.find((cluster) => cluster.id === id) || clusterDirectory.find((cluster) => cluster.id === id) || null;
 }
 
+function canDeleteCluster(cluster) {
+  if (!cluster || cluster.id === PUBLIC_CLUSTER_ID || cluster.name === "Public") return false;
+  return canManageOwner(cluster.ownerUserId);
+}
+
+function getClusterMoveOptionsMarkup(currentClusterId) {
+  const moveTargets = clusters.filter((cluster) => cluster.id !== currentClusterId);
+  if (moveTargets.length === 0) {
+    return `<option value="">移動先なし</option>`;
+  }
+  return [
+    `<option value="">移動先</option>`,
+    ...moveTargets.map((cluster) => `<option value="${escapeHtml(cluster.id)}">${escapeHtml(cluster.name)}</option>`),
+  ].join("");
+}
+
+function canMoveNodeCluster(node) {
+  return Boolean(currentUser && node?.ownerUserId === currentUser.id);
+}
+
 function renderClusterNodeList(clusterId) {
   const clusterNodes = getNodesByCreatedDesc(nodes.filter((node) => node.clusterId === clusterId));
   if (clusterNodes.length === 0) {
@@ -2669,6 +3035,9 @@ function renderClusterNodeList(clusterId) {
 
   clusterNodesContent.innerHTML = "";
   clusterNodes.forEach((node) => {
+    const row = document.createElement("article");
+    const canMove = canMoveNodeCluster(node);
+    row.className = `cluster-node-row has-move-status${canMove ? " has-move-control" : " is-move-locked"}`;
     const button = document.createElement("button");
     button.className = "cluster-node-item";
     button.type = "button";
@@ -2691,7 +3060,34 @@ function renderClusterNodeList(clusterId) {
       closeClusterNodesDialog();
       openDetail(node.id);
     });
-    clusterNodesContent.appendChild(button);
+    row.appendChild(button);
+
+    if (canMove) {
+      const hasMoveTargets = clusters.some((cluster) => cluster.id !== node.clusterId);
+      const moveField = document.createElement("label");
+      moveField.className = "cluster-node-move-field";
+      moveField.innerHTML = `
+        <span>移動</span>
+        <select class="cluster-node-move-select" data-node-id="${escapeHtml(node.id)}" ${hasMoveTargets ? "" : "disabled"}>
+          ${getClusterMoveOptionsMarkup(node.clusterId)}
+        </select>
+      `;
+      const select = moveField.querySelector(".cluster-node-move-select");
+      select.addEventListener("click", (event) => event.stopPropagation());
+      select.addEventListener("dblclick", (event) => event.stopPropagation());
+      select.addEventListener("change", () => {
+        if (!select.value) return;
+        moveNodeToCluster(node.id, select.value, clusterId);
+      });
+      row.appendChild(moveField);
+    } else {
+      const moveNote = document.createElement("div");
+      moveNote.className = "cluster-node-move-note";
+      moveNote.innerHTML = `<span>移動不可</span><small>他ユーザーの光点</small>`;
+      row.appendChild(moveNote);
+    }
+
+    clusterNodesContent.appendChild(row);
   });
   return clusterNodes.length;
 }
@@ -2716,6 +3112,12 @@ function openClusterNodesDialog(clusterId) {
     metaParts.push(description);
   }
   clusterNodesMeta.textContent = metaParts.join(" / ");
+  clusterNodesActions.innerHTML = canDeleteCluster(clusterDetail)
+    ? `<button class="danger-button" id="deleteClusterButton" type="button" data-cluster-id="${escapeHtml(cluster.id)}">クラスタを削除</button>`
+    : "";
+  clusterNodesActions.querySelector("#deleteClusterButton")?.addEventListener("click", () => {
+    deleteCluster(cluster.id);
+  });
   if (!clusterNodesDialog.open) {
     clusterNodesDialog.showModal();
   }
@@ -2725,6 +3127,7 @@ function closeClusterNodesDialog() {
   if (clusterNodesDialog.open) {
     clusterNodesDialog.close();
   }
+  clusterNodesActions.innerHTML = "";
   clusterNodesType.textContent = "クラスタ";
 }
 
@@ -2790,6 +3193,64 @@ function pruneLinksForNode(id) {
     if (hiddenLinks.length === 0) {
       hiddenLinks = null;
     }
+  }
+}
+
+async function deleteCluster(id) {
+  const cluster = getClusterById(id);
+  if (!cluster || !canDeleteCluster(cluster)) return;
+  const shouldDelete = window.confirm("このクラスタを削除しますか？\nクラスタ内の光点は削除せず、Publicクラスタへ移動します。");
+  if (!shouldDelete) return;
+
+  try {
+    if (apiAvailable) {
+      await apiRequest(`/clusters/${id}`, { method: "DELETE" });
+    }
+    const fallbackClusterId = getPublicClusterId();
+    clusters = clusters.filter((item) => item.id !== id);
+    clusterDirectory = clusterDirectory.filter((item) => item.id !== id);
+    followedClusterIds.delete(id);
+    nodes = nodes.map((node) => (node.clusterId === id ? { ...node, clusterId: fallbackClusterId } : node));
+    closeClusterNodesDialog();
+    renderAll();
+  } catch (error) {
+    window.alert("クラスタを削除できませんでした。時間をおいてもう一度お試しください。");
+  }
+}
+
+async function moveNodeToCluster(id, targetClusterId, currentDialogClusterId = null) {
+  const node = nodes.find((item) => item.id === id);
+  const targetCluster = clusters.find((cluster) => cluster.id === targetClusterId);
+  if (!node || !targetCluster || node.clusterId === targetClusterId || !canMoveNodeCluster(node)) return;
+
+  const previousClusterId = node.clusterId;
+  nodes = nodes.map((item) => (item.id === id ? { ...item, clusterId: targetClusterId } : item));
+  renderAll();
+  if (clusterNodesDialog.open) {
+    openClusterNodesDialog(currentDialogClusterId || previousClusterId);
+  }
+
+  try {
+    if (apiAvailable) {
+      const savedNode = normalizeNode(
+        await apiRequest(`/nodes/${id}/cluster`, {
+          method: "PATCH",
+          body: JSON.stringify({ clusterId: targetClusterId }),
+        }),
+      );
+      nodes = nodes.map((item) => (item.id === id ? savedNode : item));
+      renderAll();
+      if (clusterNodesDialog.open) {
+        openClusterNodesDialog(currentDialogClusterId || previousClusterId);
+      }
+    }
+  } catch (error) {
+    nodes = nodes.map((item) => (item.id === id ? { ...item, clusterId: previousClusterId } : item));
+    renderAll();
+    if (clusterNodesDialog.open) {
+      openClusterNodesDialog(currentDialogClusterId || previousClusterId);
+    }
+    window.alert("光点のクラスタを移動できませんでした。時間をおいてもう一度お試しください。");
   }
 }
 
@@ -2996,10 +3457,12 @@ async function createNodeFromValues({ type, title, body, duration, mediaFile, cl
       }
     }
     nodes = [...nodes, savedNode];
+    highlightNewNode(savedNode.id);
     return savedNode;
   } catch (error) {
     apiAvailable = false;
     nodes = [...nodes, newNode];
+    highlightNewNode(newNode.id);
     return newNode;
   }
 }
@@ -3850,6 +4313,7 @@ function renderDetailLayout(node) {
         ${node.type === "text" ? renderTextDetail(node) : renderMediaDetail(node)}
         ${renderNodeLikeAction(node)}
         ${renderNodeFavoriteAction(node)}
+        ${renderShareNodeAction(node)}
         ${renderDetailComposer()}
         ${renderDeleteNodeAction()}
       </section>
@@ -3884,6 +4348,191 @@ function renderNodeFavoriteAction(node) {
       </button>
     </section>
   `;
+}
+
+function renderShareNodeAction(node) {
+  if (!currentUser) return "";
+  const canManage = node.ownerUserId === currentUser.id;
+  const enabled = node.shareEnabled !== false;
+  return `
+    <section class="node-share-panel" aria-label="share node">
+      <div class="node-share-copy">
+        <strong>共有</strong>
+        <span>${canManage ? (enabled ? "共有可能" : "共有不可") : "公開リンクを見る"}</span>
+      </div>
+      <button class="secondary-button" id="openShareDialogButton" type="button">${canManage ? "共有設定" : "共有リンク"}</button>
+    </section>
+  `;
+}
+
+function getAbsoluteShareUrl(share) {
+  return new URL(share.url || `/share/${share.token}`, window.location.origin).href;
+}
+
+function updateNodeShareEnabled(id, shareEnabled) {
+  nodes = nodes.map((node) => (node.id === id ? { ...node, shareEnabled } : node));
+}
+
+function renderShareDialogContent(node, data = null) {
+  if (!node) return;
+  if (!data) {
+    shareDialogContent.innerHTML = `<p class="share-empty">共有設定を読み込んでいます</p>`;
+    return;
+  }
+
+  const shareEnabled = data.shareEnabled !== false;
+  const canManage = Boolean(data.canManage);
+  const shares = data.shares || [];
+  const shareRows = shares.length
+    ? shares
+        .map((share) => {
+          const disabled = Boolean(share.disabledAt);
+          const url = getAbsoluteShareUrl(share);
+          return `
+            <article class="share-link-item${disabled ? " is-disabled" : ""}">
+              <div>
+                <strong>${share.mode === "single" ? "光点だけ" : "文脈まで"}</strong>
+                <small>${disabled ? "無効化済み" : "有効"} / ${escapeHtml(formatDateTime(share.createdAt) || "-")}</small>
+              </div>
+              <input type="text" readonly value="${escapeHtml(url)}" aria-label="共有URL" />
+              <div class="share-link-actions">
+                <button class="ghost-button shareCopyButton" type="button" data-share-url="${escapeHtml(url)}" ${disabled ? "disabled" : ""}>コピー</button>
+                ${canManage ? `<button class="danger-button shareDisableButton" type="button" data-share-id="${escapeHtml(share.id)}" ${disabled ? "disabled" : ""}>無効化</button>` : ""}
+              </div>
+            </article>
+          `;
+        })
+        .join("")
+    : `<p class="share-empty">${canManage ? "共有リンクはまだありません" : "公開中の共有リンクはまだありません"}</p>`;
+
+  shareDialogContent.innerHTML = `
+    ${
+      canManage
+        ? `<section class="share-settings">
+            <label class="share-enabled-toggle">
+              <input id="shareEnabledInput" type="checkbox" ${shareEnabled ? "checked" : ""} />
+              <span>この光点を共有可能にする</span>
+            </label>
+            <p>共有不可にすると、新しい共有リンクは作成できず、既存の共有リンクも閲覧できなくなります。</p>
+          </section>
+          <section class="share-create-panel${shareEnabled ? "" : " is-disabled"}">
+            <div class="share-mode-grid" role="radiogroup" aria-label="共有範囲">
+              <label>
+                <input type="radio" name="shareMode" value="context" checked ${shareEnabled ? "" : "disabled"} />
+                <span>文脈まで共有</span>
+                <small>ソース・ターゲットの光点と接続コメントも表示</small>
+              </label>
+              <label>
+                <input type="radio" name="shareMode" value="single" ${shareEnabled ? "" : "disabled"} />
+                <span>この光点だけ共有</span>
+                <small>本文とメディアのみ表示</small>
+              </label>
+            </div>
+            <button class="primary-button" id="createShareLinkButton" type="button" ${shareEnabled ? "" : "disabled"}>共有リンクを作成</button>
+          </section>`
+        : `<section class="share-settings is-readonly"><p>この光点の所有者が公開した共有リンクを表示しています。</p></section>`
+    }
+    <section class="share-link-list" aria-label="共有リンク一覧">
+      ${shareRows}
+    </section>
+  `;
+  bindShareDialogContent(node.id);
+}
+
+async function refreshShareDialog(nodeId) {
+  const node = nodes.find((item) => item.id === nodeId);
+  if (!node) return;
+  renderShareDialogContent(node, null);
+  const data = await apiRequest(`/nodes/${nodeId}/shares`);
+  updateNodeShareEnabled(nodeId, data.shareEnabled !== false);
+  renderShareDialogContent(nodes.find((item) => item.id === nodeId), data);
+  if (activeDetailNodeId === nodeId) {
+    detailContent.innerHTML = renderDetailLayout(nodes.find((item) => item.id === nodeId));
+    bindDetailActions(nodes.find((item) => item.id === nodeId));
+  }
+}
+
+function bindShareDialogContent(nodeId) {
+  const enabledInput = shareDialogContent.querySelector("#shareEnabledInput");
+  enabledInput?.addEventListener("change", async () => {
+    enabledInput.disabled = true;
+    try {
+      const result = await apiRequest(`/nodes/${nodeId}/share-enabled`, {
+        method: "PATCH",
+        body: JSON.stringify({ shareEnabled: enabledInput.checked }),
+      });
+      updateNodeShareEnabled(nodeId, result.shareEnabled !== false);
+      await refreshShareDialog(nodeId);
+    } catch (error) {
+      window.alert("共有設定を保存できませんでした。時間をおいてもう一度お試しください。");
+      await refreshShareDialog(nodeId);
+    }
+  });
+
+  shareDialogContent.querySelector("#createShareLinkButton")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const mode = shareDialogContent.querySelector('input[name="shareMode"]:checked')?.value || "context";
+    button.disabled = true;
+    try {
+      const share = await apiRequest(`/nodes/${nodeId}/shares`, {
+        method: "POST",
+        body: JSON.stringify({ mode }),
+      });
+      await navigator.clipboard?.writeText(getAbsoluteShareUrl(share)).catch(() => {});
+      await refreshShareDialog(nodeId);
+    } catch (error) {
+      window.alert("共有リンクを作成できませんでした。共有可能になっているか確認してください。");
+      button.disabled = false;
+    }
+  });
+
+  shareDialogContent.querySelectorAll(".shareCopyButton").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await navigator.clipboard?.writeText(button.dataset.shareUrl || "").catch(() => {});
+      button.classList.add("is-copied");
+      const originalLabel = button.textContent;
+      button.textContent = "コピー済み";
+      window.setTimeout(() => {
+        button.classList.remove("is-copied");
+        button.textContent = originalLabel;
+      }, 1400);
+    });
+  });
+
+  shareDialogContent.querySelectorAll(".shareDisableButton").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const shouldDisable = window.confirm("この共有リンクを無効化しますか？");
+      if (!shouldDisable) return;
+      button.disabled = true;
+      try {
+        await apiRequest(`/node-shares/${button.dataset.shareId}`, { method: "DELETE" });
+        await refreshShareDialog(nodeId);
+      } catch (error) {
+        window.alert("共有リンクを無効化できませんでした。時間をおいてもう一度お試しください。");
+        button.disabled = false;
+      }
+    });
+  });
+}
+
+async function openShareDialog(nodeId) {
+  const node = nodes.find((item) => item.id === nodeId);
+  if (!node || !currentUser) return;
+  shareDialogTitle.textContent = node.title;
+  if (!shareDialog.open) {
+    shareDialog.showModal();
+  }
+  try {
+    await refreshShareDialog(nodeId);
+  } catch (error) {
+    shareDialogContent.innerHTML = `<p class="share-empty">共有設定を読み込めませんでした</p>`;
+  }
+}
+
+function closeShareDialog() {
+  if (shareDialog?.open) {
+    shareDialog.close();
+  }
 }
 
 function updateNodeLikeState(id, likeCount, likedByCurrentUser) {
@@ -4223,6 +4872,28 @@ function bindNodeFavoriteAction(node) {
   });
 }
 
+function bindShareNodeAction(node) {
+  const shareButton = detailContent.querySelector("#openShareDialogButton");
+  if (!shareButton) return;
+
+  shareButton.addEventListener("click", () => {
+    openShareDialog(node.id);
+  });
+}
+
+function bindDetailActions(node) {
+  if (!node) return;
+  bindDetailMetaActions();
+  bindDetailComposer(node);
+  bindNodeLikeAction(node);
+  bindNodeFavoriteAction(node);
+  bindShareNodeAction(node);
+  bindDeleteNodeAction(node);
+  bindRelationNodeCards();
+  loadLinkPreviews(detailContent);
+  bindMusicArtwork(node);
+}
+
 function bindRelationNodeCards() {
   detailContent.querySelectorAll(".relation-node-card").forEach((card) => {
     card.addEventListener("click", () => {
@@ -4501,21 +5172,14 @@ function openDetail(id) {
   if (!node) return;
 
   activeDetailNodeId = id;
-  detailType.innerHTML = renderDetailMeta(node);
-  detailTitle.textContent = node.title;
-  detailContent.innerHTML = renderDetailLayout(node);
-  bindDetailMetaActions();
-  bindDetailComposer(node);
-  bindNodeLikeAction(node);
-  bindNodeFavoriteAction(node);
-  bindDeleteNodeAction(node);
-  bindRelationNodeCards();
-  loadLinkPreviews(detailContent);
-  bindMusicArtwork(node);
   if (activeSelectionSyncCleanup) {
     activeSelectionSyncCleanup();
     activeSelectionSyncCleanup = null;
   }
+  detailType.innerHTML = renderDetailMeta(node);
+  detailTitle.textContent = node.title;
+  detailContent.innerHTML = renderDetailLayout(node);
+  bindDetailActions(node);
 
   if (!detailDialog.open) {
     detailDialog.showModal();
@@ -4632,6 +5296,7 @@ cancelProfileButton.addEventListener("click", closeProfileDialog);
 saveProfileButton.addEventListener("click", saveProfile);
 closeUserDetailDialogButton.addEventListener("click", closeUserDetailDialog);
 closeClusterNodesDialogButton.addEventListener("click", closeClusterNodesDialog);
+closeShareDialogButton.addEventListener("click", closeShareDialog);
 composerToggle.addEventListener("click", () => togglePanel(composerToggle, composerPanel));
 clusterToggle.addEventListener("click", () => togglePanel(clusterToggle, clusterPanel));
 nodeListTabs.forEach((tab) => {
@@ -4678,17 +5343,23 @@ nodesLayer.addEventListener("pointercancel", finishUniversePan);
 nodesLayer.addEventListener("wheel", handleUniverseWheel, { passive: false });
 window.addEventListener("resize", resizeCanvas);
 window.addEventListener("focus", refreshStateFromServer);
+window.addEventListener("focus", refreshNotifications);
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
     refreshStateFromServer();
+    refreshNotifications();
   }
 });
 nodeProcessingDialog?.addEventListener("cancel", (event) => {
   event.preventDefault();
 });
+notificationTriggerButton?.addEventListener("click", openNotificationDialog);
+closeNotificationDialogButton?.addEventListener("click", closeNotificationDialog);
+markNotificationsReadButton?.addEventListener("click", markAllNotificationsRead);
 detailDialog.addEventListener("close", stopDetailPlayback);
 
 setSearchSidebarCollapsed(localStorage.getItem("textosphereSearchCollapsed") === "1");
+renderNotifications();
 updateTypeFields();
 if (authToken) {
   loadState();

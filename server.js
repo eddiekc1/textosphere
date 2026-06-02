@@ -22,6 +22,13 @@ const nodeDragBounds = {
 const megaCoordinateScale = 10;
 const megaClusterRadius = { initialPx: 500, minPx: 200, maxPx: 1000 };
 const megaClusterStrength = { initialPx: 2, minPx: 1, maxPx: 5 };
+const megaClusterRepulsion = {
+  passes: 12,
+  baseDistanceRatio: 0.96,
+  largeClusterBonusRatio: 0.16,
+  pushRatio: 0.38,
+  maxPushPx: 26,
+};
 const megaNodeMinDistancePx = 80;
 const megaGravityIntervalMs = 20_000;
 const megaDriftIntervalMs = 60_000;
@@ -58,12 +65,13 @@ const inputLimits = {
   linkComment: 2000,
 };
 const defaultLinkComment = "link";
+const notificationTypes = new Set(["node_link", "node_like", "node_favorite", "cluster_follow"]);
 const maxUploadBytes = 30 * 1024 * 1024;
 const maxVideoUploadBytes = 80 * 1024 * 1024;
 const ffmpegPath = process.env.FFMPEG_PATH || "ffmpeg";
 const ffprobePath = process.env.FFPROBE_PATH || "ffprobe";
 const linkPreviewTimeoutMs = 4000;
-const linkPreviewMaxBytes = 256 * 1024;
+const linkPreviewMaxBytes = 1024 * 1024;
 const linkPreviewMaxRedirects = 3;
 const linkPreviewCacheTtlMs = 6 * 60 * 60 * 1000;
 const linkPreviewNegativeCacheTtlMs = 10 * 60 * 1000;
@@ -765,6 +773,7 @@ function toNode(row) {
     mediaUrl: row.media_url,
     mediaMime: row.media_mime,
     mediaName: row.media_name,
+    shareEnabled: row.share_enabled !== false,
     likeCount: Number(row.like_count || 0),
     likedByCurrentUser: Boolean(row.liked_by_current_user),
     favoritedByCurrentUser: Boolean(row.favorited_by_current_user),
@@ -801,6 +810,256 @@ function toClusterDetail(row) {
       profileIcon: row.owner_profile_icon || "",
     },
   };
+}
+
+function toMegaCluster(row) {
+  return {
+    id: Number(row.id),
+    name: row.name,
+    centerX: coordToPx(row.center_x),
+    centerY: coordToPx(row.center_y),
+    radius: Number(row.radius_px || 0),
+    strength: Number(row.strength_px || 0),
+  };
+}
+
+function toNodeShare(row) {
+  return {
+    id: row.id,
+    token: row.token,
+    mode: row.mode,
+    disabledAt: row.disabled_at,
+    createdAt: row.created_at,
+    url: `/share/${row.token}`,
+  };
+}
+
+function toSharedOwner(row) {
+  if (!row.owner_user_id) return null;
+  return {
+    id: row.owner_user_id,
+    userId: row.owner_user_identifier || "unknown",
+    userName: row.owner_display_name || row.owner_user_identifier || "unknown",
+    profileIcon: row.owner_profile_icon || "",
+  };
+}
+
+function toSharedNode(row, { forcePrivate = false } = {}) {
+  if (!row || forcePrivate || row.share_enabled === false) {
+    return {
+      id: row?.id || null,
+      isPrivate: true,
+      title: "非公開の光点",
+      body: "",
+      type: "private",
+    };
+  }
+
+  return {
+    ...toNode(row),
+    ownerUser: toSharedOwner(row),
+    isPrivate: false,
+  };
+}
+
+function toSharedLink(row) {
+  return {
+    id: row.id,
+    source: row.source_node_id,
+    target: row.target_node_id,
+    comment: String(row.comment || "").trim() || defaultLinkComment,
+    createdAt: row.created_at,
+  };
+}
+
+function toNotification(row) {
+  return {
+    id: row.id,
+    type: row.type,
+    readAt: row.read_at,
+    createdAt: row.created_at,
+    actorUser: row.actor_user_id
+      ? {
+          id: row.actor_user_id,
+          userId: row.actor_user_identifier || "unknown",
+          userName: row.actor_display_name || row.actor_user_identifier || "unknown",
+          profileIcon: row.actor_profile_icon || "",
+        }
+      : null,
+    node: row.node_id
+      ? {
+          id: row.node_id,
+          title: row.node_title || "Untitled",
+          type: row.node_type || "text",
+        }
+      : null,
+    relatedNode: row.related_node_id
+      ? {
+          id: row.related_node_id,
+          title: row.related_node_title || "Untitled",
+          type: row.related_node_type || "text",
+        }
+      : null,
+    cluster: row.cluster_id
+      ? {
+          id: row.cluster_id,
+          name: row.cluster_name || "Untitled cluster",
+        }
+      : null,
+    linkId: row.link_id || null,
+  };
+}
+
+async function createNotification(db, { recipientUserId, actorUserId, type, nodeId = null, relatedNodeId = null, clusterId = null, linkId = null }) {
+  if (!recipientUserId || !actorUserId || recipientUserId === actorUserId || !notificationTypes.has(type)) return;
+  await db.query(
+    `
+      insert into notifications
+        (id, recipient_user_id, actor_user_id, type, node_id, related_node_id, cluster_id, link_id)
+      values
+        ($1, $2, $3, $4, $5, $6, $7, $8)
+      on conflict do nothing
+    `,
+    [crypto.randomUUID(), recipientUserId, actorUserId, type, nodeId, relatedNodeId, clusterId, linkId],
+  );
+}
+
+async function createLinkNotifications(db, linkRow, actorUserId) {
+  const { rows } = await db.query(
+    `
+      with endpoints as (
+        select
+          source_nodes.owner_user_id as recipient_user_id,
+          $3::uuid as related_node_id,
+          $2::uuid as node_id
+        from nodes source_nodes
+        where source_nodes.id = $2
+        union all
+        select
+          target_nodes.owner_user_id as recipient_user_id,
+          $2::uuid as related_node_id,
+          $3::uuid as node_id
+        from nodes target_nodes
+        where target_nodes.id = $3
+      )
+      select distinct on (recipient_user_id)
+        recipient_user_id,
+        node_id,
+        related_node_id
+      from endpoints
+      where recipient_user_id is not null
+        and recipient_user_id <> $1
+      order by recipient_user_id
+    `,
+    [actorUserId, linkRow.source_node_id, linkRow.target_node_id],
+  );
+  for (const row of rows) {
+    await createNotification(db, {
+      recipientUserId: row.recipient_user_id,
+      actorUserId,
+      type: "node_link",
+      nodeId: row.node_id,
+      relatedNodeId: row.related_node_id,
+      linkId: linkRow.id,
+    });
+  }
+}
+
+async function getNodeWithOwner(nodeId) {
+  const { rows } = await pool.query(
+    `
+      select nodes.*,
+             users.user_identifier as owner_user_identifier,
+             users.display_name as owner_display_name,
+             users.profile_icon as owner_profile_icon
+      from nodes
+      left join users on users.id = nodes.owner_user_id
+      where nodes.id = $1
+    `,
+    [nodeId],
+  );
+  return rows[0] || null;
+}
+
+async function getSharePayload(token) {
+  const { rows: shareRows } = await pool.query(
+    "select * from node_shares where token = $1 and disabled_at is null",
+    [token],
+  );
+  const share = shareRows[0];
+  if (!share) return null;
+
+  const node = await getNodeWithOwner(share.node_id);
+  if (!node || node.share_enabled === false) return null;
+
+  const payload = {
+    share: toNodeShare(share),
+    node: toSharedNode(node),
+    sources: [],
+    targets: [],
+  };
+
+  if (share.mode !== "context") {
+    return payload;
+  }
+
+  const { rows: linkRows } = await pool.query(
+    `
+      select *
+      from links
+      where source_node_id = $1 or target_node_id = $1
+      order by created_at asc
+    `,
+    [share.node_id],
+  );
+  const relatedIds = [
+    ...new Set(
+      linkRows
+        .map((link) => (link.source_node_id === share.node_id ? link.target_node_id : link.source_node_id))
+        .filter(Boolean),
+    ),
+  ];
+  const relatedNodes = new Map();
+  if (relatedIds.length > 0) {
+    const { rows: relatedRows } = await pool.query(
+      `
+        select nodes.*,
+               users.user_identifier as owner_user_identifier,
+               users.display_name as owner_display_name,
+               users.profile_icon as owner_profile_icon
+        from nodes
+        left join users on users.id = nodes.owner_user_id
+        where nodes.id = any($1::uuid[])
+      `,
+      [relatedIds],
+    );
+    relatedRows.forEach((row) => relatedNodes.set(row.id, row));
+  }
+
+  linkRows.forEach((link) => {
+    const isSource = link.target_node_id === share.node_id;
+    const relatedId = isSource ? link.source_node_id : link.target_node_id;
+    const item = {
+      link: toSharedLink(link),
+      node: toSharedNode(relatedNodes.get(relatedId)),
+    };
+    if (isSource) {
+      payload.sources.push(item);
+    } else {
+      payload.targets.push(item);
+    }
+  });
+
+  return payload;
+}
+
+async function createShareToken() {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const token = crypto.randomBytes(24).toString("base64url");
+    const { rows } = await pool.query("select 1 from node_shares where token = $1", [token]);
+    if (rows.length === 0) return token;
+  }
+  throw createHttpError(500, "Could not create share token");
 }
 
 function countKeywordOccurrences(text, keyword) {
@@ -1063,8 +1322,8 @@ async function getNodeForResponse(nodeId, userId = null) {
   return rows[0] ? toNode(rows[0]) : null;
 }
 
-async function ensureUserPublicCluster(userId) {
-  const { rows } = await pool.query(
+async function ensureUserPublicCluster(userId, db = pool) {
+  const { rows } = await db.query(
     `
       insert into clusters (id, owner_user_id, name, description)
       values ($1, $2, 'Public', 'Default public cluster')
@@ -1205,6 +1464,7 @@ async function initDb() {
       media_url text,
       media_mime text,
       media_name text,
+      share_enabled boolean not null default true,
       x numeric(5, 2) not null,
       y numeric(5, 2) not null,
       created_at timestamptz not null default now(),
@@ -1219,6 +1479,7 @@ async function initDb() {
   await pool.query("alter table nodes add column if not exists media_url text");
   await pool.query("alter table nodes add column if not exists media_mime text");
   await pool.query("alter table nodes add column if not exists media_name text");
+  await pool.query("alter table nodes add column if not exists share_enabled boolean not null default true");
   await pool.query(`
     create table if not exists mega_clusters (
       id integer primary key check (id between 0 and 21),
@@ -1278,6 +1539,27 @@ async function initDb() {
       created_at timestamptz not null default now(),
       primary key (user_id, node_id)
     )
+  `);
+  await pool.query(`
+    create table if not exists node_shares (
+      id uuid primary key,
+      token text not null unique,
+      node_id uuid not null references nodes(id) on delete cascade,
+      owner_user_id uuid references users(id) on delete set null,
+      mode text not null check (mode in ('context', 'single')),
+      disabled_at timestamptz,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `);
+  await pool.query(`
+    create index if not exists node_shares_node_created_idx
+    on node_shares (node_id, created_at desc)
+  `);
+  await pool.query(`
+    create index if not exists node_shares_token_active_idx
+    on node_shares (token)
+    where disabled_at is null
   `);
   await pool.query(`
     create table if not exists user_blocks (
@@ -1353,6 +1635,49 @@ async function initDb() {
     )
   `);
 
+  await pool.query(`
+    create table if not exists notifications (
+      id uuid primary key,
+      recipient_user_id uuid not null references users(id) on delete cascade,
+      actor_user_id uuid references users(id) on delete set null,
+      type text not null check (type in ('node_link', 'node_like', 'node_favorite', 'cluster_follow')),
+      node_id uuid references nodes(id) on delete cascade,
+      related_node_id uuid references nodes(id) on delete cascade,
+      cluster_id uuid references clusters(id) on delete cascade,
+      link_id uuid references links(id) on delete cascade,
+      read_at timestamptz,
+      created_at timestamptz not null default now()
+    )
+  `);
+  await pool.query(`
+    create index if not exists notifications_recipient_created_idx
+    on notifications (recipient_user_id, created_at desc)
+  `);
+  await pool.query(`
+    create index if not exists notifications_recipient_unread_idx
+    on notifications (recipient_user_id, read_at)
+  `);
+  await pool.query(`
+    create unique index if not exists notifications_node_link_unique
+    on notifications (recipient_user_id, type, link_id)
+    where type = 'node_link' and link_id is not null
+  `);
+  await pool.query(`
+    create unique index if not exists notifications_node_like_unique
+    on notifications (recipient_user_id, actor_user_id, type, node_id)
+    where type = 'node_like' and node_id is not null
+  `);
+  await pool.query(`
+    create unique index if not exists notifications_node_favorite_unique
+    on notifications (recipient_user_id, actor_user_id, type, node_id)
+    where type = 'node_favorite' and node_id is not null
+  `);
+  await pool.query(`
+    create unique index if not exists notifications_cluster_follow_unique
+    on notifications (recipient_user_id, actor_user_id, type, cluster_id)
+    where type = 'cluster_follow' and cluster_id is not null
+  `);
+
   const { rows } = await pool.query("select count(*)::int as count from nodes");
   if (rows[0].count > 0) return;
 
@@ -1413,6 +1738,10 @@ app.use((req, res, next) => {
 app.use("/uploads", express.static(uploadDir));
 app.use(express.static(__dirname));
 
+app.get("/share/:token", (req, res) => {
+  res.sendFile(path.join(__dirname, "share.html"));
+});
+
 app.get("/api/health", async (req, res, next) => {
   try {
     await pool.query("select 1");
@@ -1423,6 +1752,32 @@ app.get("/api/health", async (req, res, next) => {
 });
 
 app.get("/api/link-preview", requireAuth, async (req, res, next) => {
+  try {
+    const preview = await buildLinkPreview(req.query.url);
+    if (!preview) {
+      res.status(404).json({ error: "Preview unavailable" });
+      return;
+    }
+    res.json(preview);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/shares/:token", async (req, res, next) => {
+  try {
+    const payload = await getSharePayload(req.params.token);
+    if (!payload) {
+      res.status(404).json({ error: "Share not found" });
+      return;
+    }
+    res.json(payload);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/share-link-preview", async (req, res, next) => {
   try {
     const preview = await buildLinkPreview(req.query.url);
     if (!preview) {
@@ -1651,7 +2006,15 @@ app.patch("/api/auth/me", requireAuth, parseMultipartForm, async (req, res, next
 app.get("/api/state", requireAuth, async (req, res, next) => {
   try {
     await ensureUserPublicCluster(req.user.id);
-    const [clusterResult, nodeResult, linkResult, clusterDetailResult, followResult, homeResult] = await Promise.all([
+    const [
+      clusterResult,
+      nodeResult,
+      linkResult,
+      clusterDetailResult,
+      followResult,
+      homeResult,
+      megaClusterResult,
+    ] = await Promise.all([
       pool.query("select * from clusters where owner_user_id = $1 order by created_at asc", [req.user.id]),
       pool.query(
         `
@@ -1701,6 +2064,9 @@ app.get("/api/state", requireAuth, async (req, res, next) => {
       pool.query("select * from user_space_homes where user_id = $1 and is_primary = true order by updated_at desc limit 1", [
         req.user.id,
       ]),
+      Number(req.user.role) === 1
+        ? pool.query("select * from mega_clusters order by id asc")
+        : Promise.resolve({ rows: [] }),
     ]);
 
     res.json({
@@ -1709,6 +2075,7 @@ app.get("/api/state", requireAuth, async (req, res, next) => {
       clusterDirectory: clusterDetailResult.rows.map(toClusterDetail),
       followedClusterIds: followResult.rows.map((row) => row.cluster_id),
       homeLocation: toSpaceHome(homeResult.rows[0]),
+      megaClusters: megaClusterResult.rows.map(toMegaCluster),
       nodes: nodeResult.rows.map(toNode),
       links: linkResult.rows.map(toLink),
     });
@@ -1763,22 +2130,101 @@ app.patch("/api/space-home", requireAuth, async (req, res, next) => {
   }
 });
 
+app.get("/api/notifications", requireAuth, async (req, res, next) => {
+  try {
+    const requestedLimit = Number(req.query.limit || 20);
+    const requestedOffset = Number(req.query.offset || 0);
+    const limit = Math.min(200, Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : 20));
+    const offset = Math.max(0, Number.isFinite(requestedOffset) ? requestedOffset : 0);
+    const [notificationResult, unreadResult] = await Promise.all([
+      pool.query(
+        `
+          select notifications.*,
+                 actor.user_identifier as actor_user_identifier,
+                 actor.display_name as actor_display_name,
+                 actor.profile_icon as actor_profile_icon,
+                 nodes.title as node_title,
+                 nodes.type as node_type,
+                 related_nodes.title as related_node_title,
+                 related_nodes.type as related_node_type,
+                 clusters.name as cluster_name
+          from notifications
+          left join users actor on actor.id = notifications.actor_user_id
+          left join nodes on nodes.id = notifications.node_id
+          left join nodes related_nodes on related_nodes.id = notifications.related_node_id
+          left join clusters on clusters.id = notifications.cluster_id
+          where notifications.recipient_user_id = $1
+          order by notifications.created_at desc
+          limit $2
+          offset $3
+        `,
+        [req.user.id, limit + 1, offset],
+      ),
+      pool.query(
+        "select count(*)::int as count from notifications where recipient_user_id = $1 and read_at is null",
+        [req.user.id],
+      ),
+    ]);
+
+    res.json({
+      notifications: notificationResult.rows.slice(0, limit).map(toNotification),
+      unreadCount: Number(unreadResult.rows[0]?.count || 0),
+      hasMore: notificationResult.rows.length > limit,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/notifications/:id/read", requireAuth, async (req, res, next) => {
+  try {
+    await pool.query(
+      "update notifications set read_at = coalesce(read_at, now()) where id = $1 and recipient_user_id = $2",
+      [req.params.id, req.user.id],
+    );
+    res.status(204).end();
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/notifications/read-all", requireAuth, async (req, res, next) => {
+  try {
+    await pool.query(
+      "update notifications set read_at = coalesce(read_at, now()) where recipient_user_id = $1 and read_at is null",
+      [req.user.id],
+    );
+    res.status(204).end();
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.put("/api/clusters/:id/follow", requireAuth, async (req, res, next) => {
   try {
-    const { rows } = await pool.query("select id from clusters where id = $1", [req.params.id]);
+    const { rows } = await pool.query("select id, owner_user_id from clusters where id = $1", [req.params.id]);
     if (rows.length === 0) {
       res.status(404).json({ error: "Cluster not found" });
       return;
     }
 
-    await pool.query(
+    const followResult = await pool.query(
       `
         insert into cluster_follows (user_id, cluster_id)
         values ($1, $2)
         on conflict (user_id, cluster_id) do nothing
+        returning cluster_id
       `,
       [req.user.id, req.params.id],
     );
+    if (followResult.rows.length > 0) {
+      await createNotification(pool, {
+        recipientUserId: rows[0].owner_user_id,
+        actorUserId: req.user.id,
+        type: "cluster_follow",
+        clusterId: req.params.id,
+      });
+    }
     res.status(204).end();
   } catch (error) {
     next(error);
@@ -2022,22 +2468,203 @@ app.post("/api/clusters", requireAuth, async (req, res, next) => {
   }
 });
 
+app.delete("/api/clusters/:id", requireAuth, async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const { rows } = await client.query("select * from clusters where id = $1 for update", [req.params.id]);
+    if (rows.length === 0) {
+      await client.query("rollback");
+      res.status(404).json({ error: "Cluster not found" });
+      return;
+    }
+
+    const cluster = rows[0];
+    if (!canManageOwnedResource(req.user, cluster.owner_user_id)) {
+      await client.query("rollback");
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    if (cluster.id === publicClusterId || cluster.name === "Public") {
+      await client.query("rollback");
+      res.status(400).json({ error: "Public cluster cannot be deleted" });
+      return;
+    }
+
+    const fallbackCluster = cluster.owner_user_id
+      ? await ensureUserPublicCluster(cluster.owner_user_id, client)
+      : { id: publicClusterId };
+    await client.query("update nodes set cluster_id = $2, updated_at = now() where cluster_id = $1", [
+      cluster.id,
+      fallbackCluster.id,
+    ]);
+    await client.query("delete from clusters where id = $1", [cluster.id]);
+    await client.query("commit");
+    res.status(204).end();
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.get("/api/nodes/:id/shares", requireAuth, async (req, res, next) => {
+  try {
+    const { rows: nodeRows } = await pool.query("select id, owner_user_id, share_enabled from nodes where id = $1", [
+      req.params.id,
+    ]);
+    const node = nodeRows[0];
+    if (!node) {
+      res.sendStatus(404);
+      return;
+    }
+    const canManage = node.owner_user_id === req.user.id;
+
+    const { rows } = await pool.query(
+      canManage
+        ? "select * from node_shares where node_id = $1 order by created_at desc limit 30"
+        : "select * from node_shares where node_id = $1 and disabled_at is null order by created_at desc limit 30",
+      [req.params.id],
+    );
+    const activeShares = node.share_enabled === false && !canManage ? [] : rows;
+    res.json({
+      shareEnabled: node.share_enabled !== false,
+      canManage,
+      shares: activeShares.map(toNodeShare),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/nodes/:id/share-enabled", requireAuth, async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const { rows: nodeRows } = await client.query("select * from nodes where id = $1 for update", [req.params.id]);
+    const node = nodeRows[0];
+    if (!node) {
+      await client.query("rollback");
+      res.sendStatus(404);
+      return;
+    }
+    if (node.owner_user_id !== req.user.id) {
+      await client.query("rollback");
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
+    const shareEnabled = req.body.shareEnabled !== false;
+    const { rows } = await client.query(
+      `
+        update nodes
+        set share_enabled = $2,
+            updated_at = now()
+        where id = $1
+        returning share_enabled
+      `,
+      [req.params.id, shareEnabled],
+    );
+    if (!shareEnabled) {
+      await client.query(
+        "update node_shares set disabled_at = coalesce(disabled_at, now()), updated_at = now() where node_id = $1",
+        [req.params.id],
+      );
+    }
+    await client.query("commit");
+    res.json({ shareEnabled: rows[0].share_enabled !== false });
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.post("/api/nodes/:id/shares", requireAuth, async (req, res, next) => {
+  try {
+    const mode = req.body.mode === "single" ? "single" : "context";
+    const { rows: nodeRows } = await pool.query("select id, owner_user_id, share_enabled from nodes where id = $1", [
+      req.params.id,
+    ]);
+    const node = nodeRows[0];
+    if (!node) {
+      res.sendStatus(404);
+      return;
+    }
+    if (node.owner_user_id !== req.user.id) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    if (node.share_enabled === false) {
+      res.status(400).json({ error: "Sharing is disabled for this node" });
+      return;
+    }
+
+    const token = await createShareToken();
+    const { rows } = await pool.query(
+      `
+        insert into node_shares (id, token, node_id, owner_user_id, mode)
+        values ($1, $2, $3, $4, $5)
+        returning *
+      `,
+      [crypto.randomUUID(), token, req.params.id, req.user.id, mode],
+    );
+    res.status(201).json(toNodeShare(rows[0]));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/node-shares/:id", requireAuth, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `
+        update node_shares
+        set disabled_at = coalesce(disabled_at, now()),
+            updated_at = now()
+        where id = $1
+          and owner_user_id = $2
+        returning id
+      `,
+      [req.params.id, req.user.id],
+    );
+    if (rows.length === 0) {
+      res.sendStatus(404);
+      return;
+    }
+    res.status(204).end();
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.put("/api/nodes/:id/like", requireAuth, async (req, res, next) => {
   try {
-    const existing = await pool.query("select id from nodes where id = $1", [req.params.id]);
+    const existing = await pool.query("select id, owner_user_id from nodes where id = $1", [req.params.id]);
     if (existing.rows.length === 0) {
       res.status(404).json({ error: "Node not found" });
       return;
     }
 
-    await pool.query(
+    const likeResult = await pool.query(
       `
         insert into node_likes (user_id, node_id)
         values ($1, $2)
         on conflict (user_id, node_id) do nothing
+        returning node_id
       `,
       [req.user.id, req.params.id],
     );
+    if (likeResult.rows.length > 0) {
+      await createNotification(pool, {
+        recipientUserId: existing.rows[0].owner_user_id,
+        actorUserId: req.user.id,
+        type: "node_like",
+        nodeId: req.params.id,
+      });
+    }
     res.json(await getNodeLikeState(req.params.id, req.user.id));
   } catch (error) {
     next(error);
@@ -2071,14 +2698,23 @@ app.put("/api/nodes/:id/favorite", requireAuth, async (req, res, next) => {
       return;
     }
 
-    await pool.query(
+    const favoriteResult = await pool.query(
       `
         insert into node_favorites (user_id, node_id)
         values ($1, $2)
         on conflict (user_id, node_id) do nothing
+        returning node_id
       `,
       [req.user.id, req.params.id],
     );
+    if (favoriteResult.rows.length > 0) {
+      await createNotification(pool, {
+        recipientUserId: existing.rows[0].owner_user_id,
+        actorUserId: req.user.id,
+        type: "node_favorite",
+        nodeId: req.params.id,
+      });
+    }
     res.json(await getNodeFavoriteState(req.params.id, req.user.id));
   } catch (error) {
     next(error);
@@ -2303,6 +2939,46 @@ app.patch("/api/nodes/:id/position", requireAuth, async (req, res, next) => {
   }
 });
 
+app.patch("/api/nodes/:id/cluster", requireAuth, async (req, res, next) => {
+  try {
+    const { rows: existingRows } = await pool.query("select * from nodes where id = $1", [req.params.id]);
+    if (existingRows.length === 0) {
+      res.sendStatus(404);
+      return;
+    }
+
+    const node = existingRows[0];
+    if (node.owner_user_id !== req.user.id) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
+    const { clusterId } = req.body;
+    const { rows: clusterRows } = await pool.query("select id from clusters where id = $1 and owner_user_id = $2", [
+      clusterId,
+      node.owner_user_id,
+    ]);
+    if (clusterRows.length === 0) {
+      res.status(400).json({ error: "Invalid cluster" });
+      return;
+    }
+
+    await pool.query(
+      `
+        update nodes
+        set cluster_id = $2,
+            updated_at = now()
+        where id = $1
+      `,
+      [req.params.id, clusterRows[0].id],
+    );
+
+    res.json(await getNodeForResponse(req.params.id, req.user.id));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.delete("/api/nodes/:id", requireAuth, async (req, res, next) => {
   try {
     const existing = await pool.query("select media_url, owner_user_id from nodes where id = $1", [req.params.id]);
@@ -2403,6 +3079,7 @@ app.post("/api/links", requireAuth, async (req, res, next) => {
       return;
     }
 
+    await createLinkNotifications(pool, rows[0], req.user.id);
     res.status(201).json(toLink(rows[0]));
   } catch (error) {
     next(error);
@@ -2500,23 +3177,32 @@ async function refreshMegaClusterMetrics(client = pool) {
   }
 }
 
-async function driftMegaClusters(client = pool) {
-  const { rows } = await client.query("select * from mega_clusters order by id asc");
-  const clusters = rows.map((row) => ({
+function toMegaClusterPhysics(row) {
+  return {
     id: Number(row.id),
     x: Number(row.center_x),
     y: Number(row.center_y),
     radius: pxToCoord(row.radius_px),
-  }));
-  const phase = Math.floor(Date.now() / megaDriftIntervalMs);
+    strength: pxToCoord(row.strength_px),
+  };
+}
 
-  clusters.forEach((cluster) => {
-    const seed = stableNumber(cluster.id);
-    cluster.x += Math.sin(phase * 0.73 + seed) * pxToCoord(14);
-    cluster.y += Math.cos(phase * 0.61 + seed * 1.7) * pxToCoord(14);
-  });
+function clampMegaClusterCenter(cluster) {
+  cluster.x = clamp(cluster.x, nodeDragBounds.minX, nodeDragBounds.maxX);
+  cluster.y = clamp(cluster.y, nodeDragBounds.minY, nodeDragBounds.maxY);
+}
 
-  for (let pass = 0; pass < 5; pass += 1) {
+function getMegaClusterDistanceRatio(first, second) {
+  const minRadius = pxToCoord(megaClusterRadius.minPx);
+  const maxRadius = pxToCoord(megaClusterRadius.maxPx);
+  const averageRadius = (first.radius + second.radius) / 2;
+  const radiusScale = clamp((averageRadius - minRadius) / Math.max(1, maxRadius - minRadius), 0, 1);
+  return megaClusterRepulsion.baseDistanceRatio + radiusScale * megaClusterRepulsion.largeClusterBonusRatio;
+}
+
+function separateMegaClusterCenters(clusters) {
+  const maxPush = pxToCoord(megaClusterRepulsion.maxPushPx);
+  for (let pass = 0; pass < megaClusterRepulsion.passes; pass += 1) {
     for (let firstIndex = 0; firstIndex < clusters.length; firstIndex += 1) {
       for (let secondIndex = firstIndex + 1; secondIndex < clusters.length; secondIndex += 1) {
         const first = clusters[firstIndex];
@@ -2530,29 +3216,61 @@ async function driftMegaClusters(client = pool) {
           dy = Math.sin(angle);
           distance = 1;
         }
-        const minDistance = (first.radius + second.radius) * 0.72;
-        if (distance >= minDistance) continue;
-        const push = (minDistance - distance) / 2;
-        const pushX = (dx / distance) * push;
-        const pushY = (dy / distance) * push;
-        first.x -= pushX;
-        first.y -= pushY;
-        second.x += pushX;
-        second.y += pushY;
+
+        const radiusSum = first.radius + second.radius;
+        const desiredDistance = radiusSum * getMegaClusterDistanceRatio(first, second);
+        if (distance >= desiredDistance) continue;
+
+        const overlap = desiredDistance - distance;
+        const pairStrength = clamp((first.strength + second.strength) / pxToCoord(megaClusterStrength.maxPx * 2), 0.65, 1.35);
+        const push = Math.min(maxPush, overlap * megaClusterRepulsion.pushRatio * pairStrength);
+        const radiusTotal = Math.max(1, radiusSum);
+        const firstMove = push * (second.radius / radiusTotal);
+        const secondMove = push * (first.radius / radiusTotal);
+        const ux = dx / distance;
+        const uy = dy / distance;
+
+        first.x -= ux * firstMove;
+        first.y -= uy * firstMove;
+        second.x += ux * secondMove;
+        second.y += uy * secondMove;
+        clampMegaClusterCenter(first);
+        clampMegaClusterCenter(second);
       }
     }
   }
+}
 
+async function persistMegaClusterCenters(client, clusters) {
   for (const cluster of clusters) {
     await client.query(
       "update mega_clusters set center_x = $2, center_y = $3, updated_at = now() where id = $1",
-      [
-        cluster.id,
-        clamp(cluster.x, nodeDragBounds.minX, nodeDragBounds.maxX),
-        clamp(cluster.y, nodeDragBounds.minY, nodeDragBounds.maxY),
-      ],
+      [cluster.id, Number(cluster.x.toFixed(2)), Number(cluster.y.toFixed(2))],
     );
   }
+}
+
+async function repelMegaClusters(client = pool) {
+  const { rows } = await client.query("select * from mega_clusters order by id asc");
+  const clusters = rows.map(toMegaClusterPhysics);
+  separateMegaClusterCenters(clusters);
+  await persistMegaClusterCenters(client, clusters);
+}
+
+async function driftMegaClusters(client = pool) {
+  const { rows } = await client.query("select * from mega_clusters order by id asc");
+  const clusters = rows.map(toMegaClusterPhysics);
+  const phase = Math.floor(Date.now() / megaDriftIntervalMs);
+
+  clusters.forEach((cluster) => {
+    const seed = stableNumber(cluster.id);
+    cluster.x += Math.sin(phase * 0.73 + seed) * pxToCoord(14);
+    cluster.y += Math.cos(phase * 0.61 + seed * 1.7) * pxToCoord(14);
+  });
+
+  clusters.forEach(clampMegaClusterCenter);
+  separateMegaClusterCenters(clusters);
+  await persistMegaClusterCenters(client, clusters);
 }
 
 function getMegaGravityVector(node, cluster, index) {
@@ -2626,6 +3344,7 @@ async function applyMegaClusterGravity() {
       await driftMegaClusters(client);
       lastMegaDriftAt = Date.now();
     }
+    await repelMegaClusters(client);
 
     const clusterResult = await client.query("select * from mega_clusters order by id asc");
     const nodeResult = await client.query(`
