@@ -3501,6 +3501,18 @@ function renderClusterNodeList(clusterId) {
   return clusterNodes.length;
 }
 
+function renderClusterFollowControl(cluster) {
+  const isOwnCluster = currentUser && cluster.ownerUserId === currentUser.id;
+  const isFollowed = isOwnCluster || followedClusterIds.has(cluster.id);
+  const locked = isOwnCluster ? "disabled" : "";
+  return `
+    <label class="detail-cluster-follow cluster-detail-follow" title="クラスタをフォロー">
+      <input class="detailClusterFollowInput" type="checkbox" data-cluster-id="${escapeHtml(cluster.id)}" ${isFollowed ? "checked" : ""} ${locked} />
+      <span>フォロー</span>
+    </label>
+  `;
+}
+
 function openClusterNodesDialog(clusterId) {
   const cluster = getClusterById(clusterId);
   if (!cluster) return;
@@ -3513,9 +3525,16 @@ function openClusterNodesDialog(clusterId) {
   clusterNodesType.innerHTML = `
     <span class="detail-kind">クラスタ</span>
     <span class="detail-cluster-meta">${renderOwnerLink(clusterDetail.ownerUser)}</span>
+    ${renderClusterFollowControl(clusterDetail)}
     ${createdAtMarkup}
   `;
   bindOwnerDetailLinks(clusterNodesType);
+  const followCheckbox = clusterNodesType.querySelector(".detailClusterFollowInput");
+  if (followCheckbox) {
+    followCheckbox.addEventListener("change", () => {
+      setClusterFollow(followCheckbox.dataset.clusterId, followCheckbox.checked, followCheckbox);
+    });
+  }
   const metaParts = [`${nodeCountInCluster}\u4ef6`];
   if (description) {
     metaParts.push(description);
