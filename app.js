@@ -86,6 +86,10 @@ const shareDialog = document.querySelector("#shareDialog");
 const closeShareDialogButton = document.querySelector("#closeShareDialogButton");
 const shareDialogTitle = document.querySelector("#shareDialogTitle");
 const shareDialogContent = document.querySelector("#shareDialogContent");
+const relayDialog = document.querySelector("#relayDialog");
+const closeRelayDialogButton = document.querySelector("#closeRelayDialogButton");
+const relayDialogTitle = document.querySelector("#relayDialogTitle");
+const relayDialogContent = document.querySelector("#relayDialogContent");
 const connectionDialog = document.querySelector("#connectionDialog");
 const closeConnectionDialogButton = document.querySelector("#closeConnectionDialogButton");
 const connectionType = document.querySelector("#connectionType");
@@ -144,6 +148,7 @@ const MAX_VIDEO_UPLOAD_MB = 80;
 
 const labels = {
   text: "\u30c6\u30ad\u30b9\u30c8",
+  relay: "中継通信",
   image: "\u753b\u50cf",
   music: "\u97f3\u697d",
   video: "\u6620\u50cf",
@@ -157,6 +162,7 @@ const labels = {
 
 const typeMeta = {
   text: { label: labels.text, glyph: "T", color: "#5ee7ff" },
+  relay: { label: labels.relay, glyph: "C", color: "#ff9f1c" },
   image: { label: labels.image, glyph: "I", color: "#ffd166" },
   music: { label: labels.music, glyph: "M", color: "#7effb2" },
   video: { label: labels.video, glyph: "V", color: "#ff5ea8" },
@@ -169,6 +175,7 @@ const MIN_UNIVERSE_ZOOM = 0.45;
 const MAX_UNIVERSE_ZOOM = 2.6;
 const STATE_REFRESH_MS = 30_000;
 const NOTIFICATION_REFRESH_MS = 30_000;
+const RELAY_REFRESH_MS = 5_000;
 const NOTIFICATION_PAGE_SIZE = 20;
 const NODE_POSITION_REFRESH_MS = 20_000;
 const NODE_POSITION_ANIMATION_MS = 1_800;
@@ -202,6 +209,17 @@ const NODE_DISPLAY_LAYERS = {
   connected: { className: "node-layer-connected", scale: 0.52, useTypeColor: true },
   background: { className: "node-layer-background", scale: 0.34, useTypeColor: false },
 };
+const RELAY_MESSAGE_COLORS = [
+  { border: "255, 209, 102", background: "255, 209, 102" },
+  { border: "126, 255, 178", background: "126, 255, 178" },
+  { border: "255, 94, 120", background: "255, 94, 120" },
+  { border: "255, 159, 28", background: "255, 159, 28" },
+  { border: "190, 132, 255", background: "190, 132, 255" },
+  { border: "94, 231, 255", background: "94, 231, 255" },
+  { border: "181, 129, 82", background: "181, 129, 82" },
+  { border: "255, 94, 168", background: "255, 94, 168" },
+];
+const RELAY_REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🎉"];
 const CONNECTION_DROP_BASE_THRESHOLD = 96;
 const CONNECTION_DROP_MIN_THRESHOLD = 36;
 
@@ -254,6 +272,11 @@ let stateRefreshTimer = null;
 let stateRefreshInFlight = false;
 let notificationRefreshTimer = null;
 let notificationRefreshInFlight = false;
+let relayRefreshTimer = null;
+let relayRefreshInFlight = false;
+let activeRelayNodeId = null;
+let activeRelayData = null;
+let pastedRelayImage = { file: null, previewUrl: "" };
 let nodePositionRefreshTimer = null;
 let nodePositionAnimationFrame = null;
 let authToken = localStorage.getItem("textosphereToken") || "";
@@ -353,6 +376,10 @@ function isFileWithinUploadLimit(file, type = "") {
 
 function getUploadLimitMessage(type = "") {
   return `ファイルサイズは${getUploadLimitForType(type).mb}MB以下にしてください`;
+}
+
+function isTextNodeType(type) {
+  return type === "text" || type === "relay";
 }
 
 function clearPastedImage(state, previewElement, statusElement, clearButtonElement, panelElement) {
@@ -557,7 +584,7 @@ function bindMediaDropZone({
 
 function updateMediaDropZone(type, dropZoneElement, state, statusElement, clearButtonElement) {
   if (!dropZoneElement) return;
-  const isText = type === "text";
+  const isText = isTextNodeType(type);
   dropZoneElement.classList.toggle("is-hidden", isText);
   if (isText || (state.file && !isMediaFileAcceptedForType(type, state.file))) {
     clearDroppedMedia(state, statusElement, clearButtonElement, dropZoneElement, type);
@@ -567,7 +594,7 @@ function updateMediaDropZone(type, dropZoneElement, state, statusElement, clearB
 }
 
 function getMediaFileForType(type, fileInputElement, pastedImageState, droppedMediaState = null) {
-  if (type === "text") return null;
+  if (isTextNodeType(type)) return null;
   const selectedFile = fileInputElement.files ? fileInputElement.files[0] : null;
   const file = selectedFile || droppedMediaState?.file || (type === "image" ? pastedImageState.file : null);
   if (!isFileWithinUploadLimit(file, type)) {
@@ -578,7 +605,7 @@ function getMediaFileForType(type, fileInputElement, pastedImageState, droppedMe
 }
 
 function hasOversizedMediaFile(type, fileInputElement, pastedImageState, droppedMediaState = null) {
-  if (type === "text") return false;
+  if (isTextNodeType(type)) return false;
   const selectedFile = fileInputElement.files ? fileInputElement.files[0] : null;
   const file = selectedFile || droppedMediaState?.file || (type === "image" ? pastedImageState.file : null);
   return !!file && !isFileWithinUploadLimit(file, type);
@@ -916,6 +943,9 @@ function clearAuth() {
   if (userDetailDialog.open) {
     closeUserDetailDialog();
   }
+  if (relayDialog?.open) {
+    closeRelayDialog();
+  }
   showAuth();
 }
 
@@ -1118,7 +1148,7 @@ function normalizeUniverseBounds(bounds) {
 }
 
 function normalizeNode(node) {
-  const max = node.type === "text" ? (node.body || "").length : Number(node.duration || 0);
+  const max = isTextNodeType(node.type) ? (node.body || "").length : Number(node.duration || 0);
   const selection = node.selection || { start: 0, end: max };
   const selectionStart = clamp(Number(selection.start || 0), 0, max);
   return {
@@ -1126,7 +1156,7 @@ function normalizeNode(node) {
     ownerUserId: node.ownerUserId || null,
     clusterId: node.clusterId || getPublicClusterId(),
     body: node.body || "",
-    duration: node.type === "text" ? null : Number(node.duration || 0),
+    duration: isTextNodeType(node.type) ? null : Number(node.duration || 0),
     mediaUrl: node.mediaUrl || null,
     mediaMime: node.mediaMime || null,
     mediaName: node.mediaName || null,
@@ -1135,6 +1165,9 @@ function normalizeNode(node) {
     likeCount: Number(node.likeCount || 0),
     likedByCurrentUser: Boolean(node.likedByCurrentUser),
     favoritedByCurrentUser: Boolean(node.favoritedByCurrentUser),
+    relaySessionId: node.relaySessionId || null,
+    relayStatus: node.relayStatus || null,
+    relayParticipant: Boolean(node.relayParticipant),
     createdAt: node.createdAt || new Date().toISOString(),
     selection: {
       start: selectionStart,
@@ -1367,6 +1400,10 @@ function stopStateRefresh() {
 }
 
 function getNotificationMessage(notification) {
+  if (notification.type === "relay_invite") {
+    const actorName = notification.actorUser ? getUserName(notification.actorUser) : "誰か";
+    return `${actorName}さんから通信に招待されました`;
+  }
   const actorName = notification.actorUser ? getUserName(notification.actorUser) : "誰か";
   if (notification.type === "node_link") {
     const nodeTitle = notification.node?.title || "あなたの光点";
@@ -1401,6 +1438,9 @@ function renderNotificationActor(notification) {
 
 function renderNotificationMessage(notification) {
   const actor = renderNotificationActor(notification);
+  if (notification.type === "relay_invite") {
+    return `${actor}<span>さんから通信に招待されました</span>`;
+  }
   if (notification.type === "node_link") {
     const nodeTitle = notification.node?.title || "あなたの光点";
     const relatedTitle = notification.relatedNode?.title || "別の光点";
@@ -1935,7 +1975,7 @@ function getBezierPositionAtDistance(start, controlA, controlB, end, distance) {
 
 function drawSourceArrow(source, from, controlFrom, controlTo, to) {
   const zoomedScale = clamp(universeZoom, 0.55, 2.4);
-  const nodeRadius = (source.type === "text" ? 37 : 43) * zoomedScale;
+  const nodeRadius = (isTextNodeType(source.type) ? 37 : 43) * zoomedScale;
   const arrowPosition = getBezierPositionAtDistance(from, controlFrom, controlTo, to, nodeRadius + 10 * zoomedScale);
   const tangent = getBezierTangent(from, controlFrom, controlTo, to, arrowPosition.t);
   let length = Math.hypot(tangent.x, tangent.y) || 1;
@@ -2210,7 +2250,7 @@ function renderNodes() {
     button.style.left = `${point.x}px`;
     button.style.top = `${point.y}px`;
     button.style.setProperty("--node-color", nodeColor);
-    button.style.setProperty("--size", `${node.type === "text" ? 74 : 86}px`);
+    button.style.setProperty("--size", `${isTextNodeType(node.type) ? 74 : 86}px`);
     button.style.setProperty("--node-scale", String(clamp(universeZoom, 0.45, 2.6) * nodeScale));
     button.setAttribute("aria-label", `${node.title}${labels.open}`);
     button.dataset.nodeId = node.id;
@@ -3143,7 +3183,7 @@ function getSearchFilteredItems() {
 
   const results = [];
 
-  if (type === "all" || ["text", "image", "music", "video"].includes(type)) {
+  if (type === "all" || ["text", "relay", "image", "music", "video"].includes(type)) {
     nodes.forEach((node) => {
       if (type !== "all" && node.type !== type) return;
       const haystack = `${node.title || ""}\n${node.body || ""}`.toLowerCase();
@@ -3825,7 +3865,7 @@ function stopNodePositionRefresh() {
 }
 
 function getDefaultSelection(type, body, duration) {
-  if (type === "text") {
+  if (isTextNodeType(type)) {
     return { start: 0, end: body.length };
   }
   if (type === "image") {
@@ -3911,9 +3951,9 @@ async function createNodeFromValues({ type, title, body, duration, mediaFile, cl
     body: safeBody,
     duration: safeDuration,
     createdAt: new Date().toISOString(),
-    mediaUrl: type !== "text" && mediaFile ? URL.createObjectURL(mediaFile) : null,
-    mediaMime: type !== "text" && mediaFile ? mediaFile.type : null,
-    mediaName: type !== "text" && mediaFile ? mediaFile.name : null,
+    mediaUrl: !isTextNodeType(type) && mediaFile ? URL.createObjectURL(mediaFile) : null,
+    mediaMime: !isTextNodeType(type) && mediaFile ? mediaFile.type : null,
+    mediaName: !isTextNodeType(type) && mediaFile ? mediaFile.name : null,
     likeCount: 0,
     likedByCurrentUser: false,
     favoritedByCurrentUser: false,
@@ -3925,7 +3965,7 @@ async function createNodeFromValues({ type, title, body, duration, mediaFile, cl
   try {
     let savedNode = newNode;
     if (apiAvailable) {
-      if (type !== "text" && mediaFile) {
+      if (!isTextNodeType(type) && mediaFile) {
         const formData = new FormData();
         formData.append("type", type);
         formData.append("title", safeTitle);
@@ -4166,7 +4206,7 @@ async function deleteLinkBetween(source, target) {
 
 function updateTypeFields() {
   const type = typeInput.value;
-  const isText = type === "text";
+  const isText = isTextNodeType(type);
   const hasDuration = type === "music" || type === "video";
   textField.classList.remove("is-hidden");
   mediaField.classList.toggle("is-hidden", isText);
@@ -4219,7 +4259,7 @@ function formatTime(totalSeconds) {
 }
 
 function getSelectionBounds(node) {
-  const max = node.type === "text" ? node.body.length : node.duration;
+  const max = isTextNodeType(node.type) ? node.body.length : node.duration;
   const start = clamp(node.selection.start, 0, max);
   const end = clamp(node.selection.end, start, max);
   return { start, end, max };
@@ -4229,7 +4269,7 @@ async function updateNodeSelection(id, start, end) {
   const targetNode = nodes.find((node) => node.id === id);
   if (!targetNode) return;
 
-  const max = targetNode.type === "text" ? targetNode.body.length : targetNode.duration;
+  const max = isTextNodeType(targetNode.type) ? targetNode.body.length : targetNode.duration;
   const safeStart = clamp(Number(start || 0), 0, max);
   const safeEnd = clamp(Number(end || max), safeStart, max);
   let updatedNode = { ...targetNode, selection: { start: safeStart, end: safeEnd } };
@@ -4834,7 +4874,8 @@ function renderDetailLayout(node) {
     <div class="${layoutClass}">
       ${renderRelationColumn("ソースノード", sourceItems, "source")}
       <section class="detail-current-node" aria-label="現在の光点">
-        ${node.type === "text" ? renderTextDetail(node) : renderMediaDetail(node)}
+        ${isTextNodeType(node.type) ? renderTextDetail(node) : renderMediaDetail(node)}
+        ${renderRelayNodeAction(node)}
         ${renderNodeLikeAction(node)}
         ${renderNodeFavoriteAction(node)}
         ${renderShareNodeAction(node)}
@@ -4875,7 +4916,7 @@ function renderNodeFavoriteAction(node) {
 }
 
 function renderShareNodeAction(node) {
-  if (!currentUser) return "";
+  if (!currentUser || node.type === "relay") return "";
   const canManage = node.ownerUserId === currentUser.id;
   const enabled = node.shareEnabled !== false;
   return `
@@ -5041,7 +5082,7 @@ function bindShareDialogContent(nodeId) {
 
 async function openShareDialog(nodeId) {
   const node = nodes.find((item) => item.id === nodeId);
-  if (!node || !currentUser) return;
+  if (!node || !currentUser || node.type === "relay") return;
   shareDialogTitle.textContent = node.title;
   if (!shareDialog.open) {
     shareDialog.showModal();
@@ -5057,6 +5098,461 @@ function closeShareDialog() {
   if (shareDialog?.open) {
     shareDialog.close();
   }
+}
+
+function userSummaryMarkup(user, className = "relay-user-card") {
+  return `
+    <article class="${className}">
+      ${renderMiniUserIcon(user)}
+      <span>${escapeHtml(getUserName(user))}</span>
+    </article>
+  `;
+}
+
+function renderRelayNodeAction(node) {
+  if (!currentUser || node.type !== "relay") return "";
+  const isOwner = node.ownerUserId === currentUser.id;
+  const canOpen = isOwner || node.relayParticipant;
+  const isClosed = node.relayStatus === "closed";
+  const label = isClosed ? "通信ログ閲覧" : "通信開始";
+  const stateLabel = isClosed
+    ? "通信は終了しています"
+    : node.relaySessionId
+      ? canOpen
+        ? "通信中"
+        : "通信相手にのみ公開"
+      : isOwner
+        ? "通信先を選択できます"
+        : "持ち主が通信を開始すると有効になります";
+  return `
+    <section class="node-relay-panel" aria-label="relay communication">
+      <div class="node-relay-copy">
+        <strong>中継通信</strong>
+        <span>${escapeHtml(stateLabel)}</span>
+      </div>
+      <button class="primary-button" id="openRelayDialogButton" type="button" ${canOpen ? "" : "disabled"}>${label}</button>
+    </section>
+  `;
+}
+
+function updateRelayNodeState(nodeId, data) {
+  nodes = nodes.map((node) =>
+    node.id === nodeId
+      ? {
+          ...node,
+          relaySessionId: data.session?.id || node.relaySessionId || null,
+          relayStatus: data.session?.status || null,
+          relayParticipant: Boolean(data.canParticipate),
+        }
+      : node,
+  );
+}
+
+function renderRelayRecipientPicker(data) {
+  if (!data.canManage || data.session) return "";
+  const likedUsers = data.likedUsers || [];
+  return `
+    <section class="relay-recipient-panel">
+      <div class="relay-section-head">
+        <strong>通信先</strong>
+        <span>${likedUsers.length}人</span>
+      </div>
+      <div class="relay-recipient-list">
+        ${
+          likedUsers.length
+            ? likedUsers
+                .map(
+                  (user) => `
+                    <label class="relay-recipient-item">
+                      <input type="checkbox" value="${escapeHtml(user.id)}" />
+                      ${renderMiniUserIcon(user)}
+                      <span>${escapeHtml(getUserName(user))}</span>
+                    </label>
+                  `,
+                )
+                .join("")
+            : `<p class="relay-empty">この光点にLikeしているユーザーはまだいません</p>`
+        }
+      </div>
+      <button class="primary-button" id="confirmRelayRecipientsButton" type="button" ${likedUsers.length ? "" : "disabled"}>決定</button>
+    </section>
+  `;
+}
+
+function getRelayUserColor(userId) {
+  const value = String(userId || "unknown");
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return RELAY_MESSAGE_COLORS[hash % RELAY_MESSAGE_COLORS.length];
+}
+
+function renderRelayMessageReactions(message, mine) {
+  if (mine) {
+    const activeReactions = (message.reactions || []).filter((reaction) => Number(reaction.count || 0) > 0);
+    if (activeReactions.length === 0) return "";
+    return `
+      <div class="relay-reaction-row is-readonly">
+        ${activeReactions
+          .map(
+            (reaction) => `
+              <span class="relay-reaction-chip">
+                <span>${escapeHtml(reaction.emoji)}</span>
+                <strong>${Number(reaction.count || 0)}</strong>
+              </span>
+            `,
+          )
+          .join("")}
+      </div>
+    `;
+  }
+
+  const reactionByEmoji = new Map((message.reactions || []).map((reaction) => [reaction.emoji, reaction]));
+  return `
+    <div class="relay-reaction-row">
+      ${RELAY_REACTION_EMOJIS.map((emoji) => {
+        const reaction = reactionByEmoji.get(emoji);
+        const count = Number(reaction?.count || 0);
+        const reacted = Boolean(reaction?.reactedByCurrentUser);
+        return `
+          <button class="relayReactionButton${reacted ? " is-reacted" : ""}" type="button" data-message-id="${escapeHtml(
+            message.id,
+          )}" data-emoji="${escapeHtml(emoji)}" aria-pressed="${reacted ? "true" : "false"}">
+            <span>${escapeHtml(emoji)}</span>
+            ${count > 0 ? `<strong>${count}</strong>` : ""}
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderRelayMessage(message) {
+  const mine = message.senderUserId === currentUser?.id;
+  const imageUrl = resolveMediaUrl(message.imageUrl);
+  const color = getRelayUserColor(message.senderUserId);
+  const colorStyle = mine
+    ? ""
+    : ` style="--relay-user-border: ${color.border}; --relay-user-background: ${color.background}"`;
+  return `
+    <article class="relay-message ${mine ? "is-mine" : "is-other"}"${colorStyle}>
+      <div class="relay-message-meta">
+        <strong>${escapeHtml(getUserName(message.senderUser))}</strong>
+        <span>${escapeHtml(formatDateTime(message.createdAt) || "-")}</span>
+      </div>
+      ${message.body ? `<p>${escapeHtml(message.body)}</p>` : ""}
+      ${imageUrl ? `<img class="relay-message-image" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(message.imageName || "通信画像")}" />` : ""}
+      ${renderRelayMessageReactions(message, mine)}
+    </article>
+  `;
+}
+
+function renderRelayComposer(readOnly) {
+  if (readOnly) {
+    return `<p class="relay-readonly-note">通信ログは読み取り専用です</p>`;
+  }
+  return `
+    <form class="relay-compose">
+      <textarea class="relayMessageInput" rows="3" maxlength="${INPUT_LIMITS.longText}" placeholder="メッセージを入力"></textarea>
+      <div class="relay-compose-tools">
+        <div class="relayFileControl">
+          <label class="relayFilePicker">
+            <span>ファイル選択</span>
+            <input class="relayImageInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" />
+          </label>
+          <span class="relayFileStatus">ファイルが選択されていません</span>
+        </div>
+        <div class="clipboard-image-panel relayPastePanel" tabindex="0">
+          <div class="clipboard-image-copy">
+            <strong>画像を貼り付け</strong>
+            <small class="relayPasteStatus">ここをクリックして Ctrl+V で貼り付けできます</small>
+          </div>
+          <img class="relayPastePreview" alt="" hidden />
+          <button class="ghost-button relayPasteClear" type="button" hidden>解除</button>
+        </div>
+        <button class="primary-button relaySendButton" type="submit">送信</button>
+      </div>
+    </form>
+  `;
+}
+
+function setRelayFileStatus(fileStatus, file = null) {
+  if (!fileStatus) return;
+  fileStatus.textContent = file ? file.name : "ファイルが選択されていません";
+}
+
+function getRelayScrollSnapshot(forceScrollBottom = false) {
+  if (forceScrollBottom) return { shouldStickToBottom: true };
+  const list = relayDialogContent.querySelector(".relay-message-list");
+  if (!list) return { shouldStickToBottom: true };
+  const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
+  return {
+    scrollTop: list.scrollTop,
+    shouldStickToBottom: distanceFromBottom <= 120,
+  };
+}
+
+function restoreRelayMessageScroll(snapshot) {
+  const list = relayDialogContent.querySelector(".relay-message-list");
+  if (!list || !snapshot) return;
+  if (snapshot.shouldStickToBottom) {
+    const scrollToBottom = () => {
+      list.scrollTop = list.scrollHeight;
+    };
+    requestAnimationFrame(scrollToBottom);
+    list.querySelectorAll("img").forEach((image) => {
+      image.addEventListener("load", scrollToBottom, { once: true });
+    });
+    return;
+  }
+  requestAnimationFrame(() => {
+    list.scrollTop = Number(snapshot.scrollTop || 0);
+  });
+}
+
+function renderRelayDialogContent(data = null, options = {}) {
+  const scrollSnapshot = getRelayScrollSnapshot(Boolean(options.forceScrollBottom));
+  if (!data) {
+    relayDialogContent.innerHTML = `<p class="relay-empty">通信を読み込んでいます</p>`;
+    return;
+  }
+  const participants = data.participants || [];
+  const me = participants.find((participant) => participant.id === currentUser?.id) || currentUser;
+  const others = participants.filter((participant) => participant.id !== currentUser?.id);
+  const hasSession = Boolean(data.session);
+  const readOnly = Boolean(data.readOnly || !hasSession);
+  relayDialogContent.innerHTML = `
+    ${renderRelayRecipientPicker(data)}
+    <section class="relay-chat-grid ${hasSession ? "" : "is-waiting"}">
+      <aside class="relay-side relay-self" aria-label="自分">
+        <div class="relay-section-head"><strong>自分</strong></div>
+        ${userSummaryMarkup(me)}
+      </aside>
+      <section class="relay-chat-space" aria-label="チャット">
+        <div class="relay-message-list">
+          ${
+            hasSession
+              ? (data.messages || []).map(renderRelayMessage).join("") || `<p class="relay-empty">メッセージはまだありません</p>`
+              : `<p class="relay-empty">通信先を選択して決定すると通信が始まります</p>`
+          }
+        </div>
+        ${hasSession ? renderRelayComposer(readOnly) : ""}
+      </section>
+      <aside class="relay-side relay-others" aria-label="通信相手">
+        <div class="relay-section-head"><strong>通信相手</strong><span>${others.length}</span></div>
+        <div class="relay-user-list">
+          ${others.length ? others.map((user) => userSummaryMarkup(user)).join("") : `<p class="relay-empty">未決定</p>`}
+        </div>
+      </aside>
+    </section>
+    ${
+      data.canManage && hasSession && !data.readOnly
+        ? `<button class="danger-button relayCloseButton" type="button">通信終了</button>`
+        : ""
+    }
+  `;
+  bindRelayDialogContent(data);
+  restoreRelayMessageScroll(scrollSnapshot);
+}
+
+async function refreshRelayDialog({ silent = false, forceScrollBottom = false } = {}) {
+  if (!activeRelayNodeId || relayRefreshInFlight) return null;
+  if (silent && relayDialogContent.querySelector(".relay-compose")?.contains(document.activeElement)) return null;
+  relayRefreshInFlight = true;
+  try {
+    const data = await apiRequest(`/nodes/${activeRelayNodeId}/relay`);
+    activeRelayData = data;
+    updateRelayNodeState(activeRelayNodeId, data);
+    renderRelayDialogContent(data, { forceScrollBottom });
+    if (!data.session) {
+      stopRelayRefresh();
+    }
+    return data;
+  } catch (error) {
+    if (!silent) {
+      relayDialogContent.innerHTML = `<p class="relay-empty">通信を開けませんでした</p>`;
+    }
+    return null;
+  } finally {
+    relayRefreshInFlight = false;
+  }
+}
+
+function startRelayRefresh() {
+  if (relayRefreshTimer !== null) return;
+  relayRefreshTimer = setInterval(() => refreshRelayDialog({ silent: true }), RELAY_REFRESH_MS);
+}
+
+function stopRelayRefresh() {
+  if (relayRefreshTimer !== null) {
+    clearInterval(relayRefreshTimer);
+    relayRefreshTimer = null;
+  }
+  relayRefreshInFlight = false;
+}
+
+async function openRelayDialog(nodeId) {
+  const node = nodes.find((item) => item.id === nodeId);
+  if (!node || node.type !== "relay") return;
+  activeRelayNodeId = nodeId;
+  relayDialogTitle.textContent = node.title;
+  renderRelayDialogContent(null);
+  if (!relayDialog.open) {
+    relayDialog.showModal();
+  }
+  const data = await refreshRelayDialog({ forceScrollBottom: true });
+  if (data?.session) {
+    startRelayRefresh();
+  }
+}
+
+function closeRelayDialog() {
+  stopRelayRefresh();
+  activeRelayNodeId = null;
+  activeRelayData = null;
+  clearPastedImage(pastedRelayImage, relayDialogContent.querySelector(".relayPastePreview"), relayDialogContent.querySelector(".relayPasteStatus"), relayDialogContent.querySelector(".relayPasteClear"), relayDialogContent.querySelector(".relayPastePanel"));
+  if (relayDialog?.open) {
+    relayDialog.close();
+  }
+}
+
+function bindRelayDialogContent(data) {
+  relayDialogContent.querySelectorAll(".relayReactionButton").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (data.readOnly || button.disabled) return;
+      button.disabled = true;
+      try {
+        await apiRequest(`/nodes/${data.nodeId}/relay/messages/${button.dataset.messageId}/reactions`, {
+          method: "PUT",
+          body: JSON.stringify({ emoji: button.dataset.emoji }),
+        });
+        await refreshRelayDialog();
+      } catch (error) {
+        button.disabled = false;
+        window.alert("リアクションを送信できませんでした");
+      }
+    });
+  });
+
+  relayDialogContent.querySelector("#confirmRelayRecipientsButton")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const userIds = Array.from(relayDialogContent.querySelectorAll(".relay-recipient-item input:checked")).map((input) => input.value);
+    if (userIds.length === 0) {
+      window.alert("通信先を選択してください");
+      return;
+    }
+    button.disabled = true;
+    try {
+      const nextData = await apiRequest(`/nodes/${data.nodeId}/relay/start`, {
+        method: "POST",
+        body: JSON.stringify({ userIds }),
+      });
+      activeRelayData = nextData;
+      updateRelayNodeState(data.nodeId, nextData);
+      renderRelayDialogContent(nextData);
+      if (nextData.session) {
+        startRelayRefresh();
+      }
+      if (activeDetailNodeId === data.nodeId) {
+        detailContent.innerHTML = renderDetailLayout(nodes.find((node) => node.id === data.nodeId));
+        bindDetailActions(nodes.find((node) => node.id === data.nodeId));
+      }
+      refreshNotifications();
+    } catch (error) {
+      window.alert("通信を開始できませんでした");
+      button.disabled = false;
+    }
+  });
+
+  const pastePanel = relayDialogContent.querySelector(".relayPastePanel");
+  const pastePreview = relayDialogContent.querySelector(".relayPastePreview");
+  const pasteStatus = relayDialogContent.querySelector(".relayPasteStatus");
+  const pasteClearButton = relayDialogContent.querySelector(".relayPasteClear");
+  const fileInput = relayDialogContent.querySelector(".relayImageInput");
+  const fileStatus = relayDialogContent.querySelector(".relayFileStatus");
+  pastePanel?.addEventListener("click", () => pastePanel.focus());
+  pastePanel?.addEventListener("paste", (event) => {
+    if (handleImagePaste(event, pastedRelayImage, pastePreview, pasteStatus, pasteClearButton, pastePanel, fileInput)) {
+      setRelayFileStatus(fileStatus);
+    }
+  });
+  pasteClearButton?.addEventListener("click", () => {
+    clearPastedImage(pastedRelayImage, pastePreview, pasteStatus, pasteClearButton, pastePanel);
+  });
+  fileInput?.addEventListener("change", () => {
+    const file = fileInput.files ? fileInput.files[0] : null;
+    if (file && !isFileWithinUploadLimit(file, "image")) {
+      window.alert(getUploadLimitMessage("image"));
+      fileInput.value = "";
+      setRelayFileStatus(fileStatus);
+      return;
+    }
+    if (file) {
+      clearPastedImage(pastedRelayImage, pastePreview, pasteStatus, pasteClearButton, pastePanel);
+    }
+    setRelayFileStatus(fileStatus, file);
+  });
+
+  const relayComposeForm = relayDialogContent.querySelector(".relay-compose");
+  relayComposeForm?.querySelector(".relayMessageInput")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.altKey || event.isComposing) return;
+    event.preventDefault();
+    relayComposeForm.requestSubmit();
+  });
+  relayComposeForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const input = form.querySelector(".relayMessageInput");
+    const sendButton = form.querySelector(".relaySendButton");
+    const file = fileInput?.files?.[0] || pastedRelayImage.file;
+    const body = input.value.trim();
+    if (!body && !file) return;
+    if (file && !isFileWithinUploadLimit(file, "image")) {
+      window.alert(getUploadLimitMessage("image"));
+      return;
+    }
+    sendButton.disabled = true;
+    const formData = new FormData();
+    formData.append("body", body);
+    if (file) {
+      formData.append("imageFile", file);
+    }
+    try {
+      await apiRequest(`/nodes/${data.nodeId}/relay/messages`, {
+        method: "POST",
+        body: formData,
+      });
+      input.value = "";
+      if (fileInput) fileInput.value = "";
+      setRelayFileStatus(fileStatus);
+      clearPastedImage(pastedRelayImage, pastePreview, pasteStatus, pasteClearButton, pastePanel);
+      await refreshRelayDialog({ forceScrollBottom: true });
+    } catch (error) {
+      window.alert("メッセージを送信できませんでした");
+      sendButton.disabled = false;
+    }
+  });
+
+  relayDialogContent.querySelector(".relayCloseButton")?.addEventListener("click", async (event) => {
+    const shouldClose = window.confirm("この光点での通信を終了しますか？");
+    if (!shouldClose) return;
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const nextData = await apiRequest(`/nodes/${data.nodeId}/relay/close`, { method: "POST" });
+      activeRelayData = nextData;
+      updateRelayNodeState(data.nodeId, nextData);
+      renderRelayDialogContent(nextData);
+      if (activeDetailNodeId === data.nodeId) {
+        detailContent.innerHTML = renderDetailLayout(nodes.find((node) => node.id === data.nodeId));
+        bindDetailActions(nodes.find((node) => node.id === data.nodeId));
+      }
+    } catch (error) {
+      window.alert("通信を終了できませんでした");
+      button.disabled = false;
+    }
+  });
 }
 
 function updateNodeLikeState(id, likeCount, likedByCurrentUser) {
@@ -5177,6 +5673,7 @@ function renderDetailComposer() {
             <option value="image">画像</option>
             <option value="music">音楽</option>
             <option value="video">映像</option>
+            <option value="relay">中継通信</option>
           </select>
         </label>
         <label class="field">
@@ -5229,7 +5726,7 @@ function renderDeleteNodeAction() {
 }
 
 function updateComposerMediaFields(type, mediaFieldElement, fileInputElement, durationFieldElement) {
-  const isText = type === "text";
+  const isText = isTextNodeType(type);
   const hasDuration = type === "music" || type === "video";
   mediaFieldElement.classList.toggle("is-hidden", isText);
   durationFieldElement.classList.toggle("is-hidden", !hasDuration);
@@ -5405,6 +5902,15 @@ function bindShareNodeAction(node) {
   });
 }
 
+function bindRelayNodeAction(node) {
+  const relayButton = detailContent.querySelector("#openRelayDialogButton");
+  if (!relayButton) return;
+
+  relayButton.addEventListener("click", () => {
+    openRelayDialog(node.id);
+  });
+}
+
 function bindDetailActions(node) {
   if (!node) return;
   bindDetailMetaActions();
@@ -5412,6 +5918,7 @@ function bindDetailActions(node) {
   bindNodeLikeAction(node);
   bindNodeFavoriteAction(node);
   bindShareNodeAction(node);
+  bindRelayNodeAction(node);
   bindDeleteNodeAction(node);
   bindRelationNodeCards();
   loadLinkPreviews(detailContent);
@@ -5463,7 +5970,7 @@ function bindDetailSelectionEditor(node) {
     activeSelectionSyncCleanup = null;
   }
 
-  if (node.type === "text") {
+  if (isTextNodeType(node.type)) {
     const textBody = document.querySelector("#detailTextBody");
     if (textBody) {
       let dragStartOffset = null;
@@ -5778,6 +6285,7 @@ saveProfileButton.addEventListener("click", saveProfile);
 closeUserDetailDialogButton.addEventListener("click", closeUserDetailDialog);
 closeClusterNodesDialogButton.addEventListener("click", closeClusterNodesDialog);
 closeShareDialogButton.addEventListener("click", closeShareDialog);
+closeRelayDialogButton?.addEventListener("click", closeRelayDialog);
 composerToggle.addEventListener("click", () => togglePanel(composerToggle, composerPanel));
 clusterToggle.addEventListener("click", () => togglePanel(clusterToggle, clusterPanel));
 nodeListTabs.forEach((tab) => {
@@ -5838,6 +6346,11 @@ notificationTriggerButton?.addEventListener("click", openNotificationDialog);
 closeNotificationDialogButton?.addEventListener("click", closeNotificationDialog);
 markNotificationsReadButton?.addEventListener("click", markAllNotificationsRead);
 detailDialog.addEventListener("close", stopDetailPlayback);
+relayDialog?.addEventListener("close", () => {
+  stopRelayRefresh();
+  activeRelayNodeId = null;
+  activeRelayData = null;
+});
 
 setSearchSidebarCollapsed(localStorage.getItem("textosphereSearchCollapsed") === "1");
 setLeftSidebarCollapsed(localStorage.getItem("textosphereLeftSidebarCollapsed") === "1");
