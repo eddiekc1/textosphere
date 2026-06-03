@@ -69,7 +69,7 @@ const inputLimits = {
   linkComment: 2000,
 };
 const defaultLinkComment = "link";
-const notificationTypes = new Set(["node_link", "node_like", "node_favorite", "cluster_follow"]);
+const notificationTypes = new Set(["node_link", "node_like", "node_favorite", "cluster_follow", "relay_invite"]);
 const maxUploadBytes = 30 * 1024 * 1024;
 const maxVideoUploadBytes = 80 * 1024 * 1024;
 const ffmpegPath = process.env.FFMPEG_PATH || "ffmpeg";
@@ -701,6 +701,33 @@ function storeProfileIconFile(file) {
   };
 }
 
+function storeRelayImageFile(file) {
+  if (!file) return null;
+  if (file.buffer.length > maxUploadBytes) {
+    throw createHttpError(413, "Upload file is too large");
+  }
+
+  const extension = path.extname(file.originalname).toLowerCase();
+  const validImage =
+    ["image/png", "image/jpeg", "image/gif"].includes(file.mimetype) ||
+    [".png", ".jpg", ".jpeg", ".gif"].includes(extension);
+  if (!validImage) {
+    throw createHttpError(400, "Message image requires PNG/JPG/GIF");
+  }
+
+  const safeExtension =
+    extension || (file.mimetype === "image/gif" ? ".gif" : file.mimetype === "image/jpeg" ? ".jpg" : ".png");
+  const storedName = `${crypto.randomUUID()}${safeExtension}`;
+  const mediaPath = path.join(uploadDir, storedName);
+  fs.writeFileSync(mediaPath, file.buffer);
+  return {
+    mediaPath,
+    imageUrl: `/uploads/${storedName}`,
+    imageMime: file.mimetype,
+    imageName: file.originalname,
+  };
+}
+
 function normalizeProfileIconUrl(value) {
   const rawUrl = String(value || "").trim();
   if (!rawUrl || /[\u0000-\u001f\u007f]/.test(rawUrl)) return "";
@@ -820,6 +847,9 @@ function toNode(row) {
     likeCount: Number(row.like_count || 0),
     likedByCurrentUser: Boolean(row.liked_by_current_user),
     favoritedByCurrentUser: Boolean(row.favorited_by_current_user),
+    relaySessionId: row.relay_session_id || null,
+    relayStatus: row.relay_status || null,
+    relayParticipant: Boolean(row.relay_participant_user_id),
     createdAt: row.created_at,
     selection: {
       start: row.selection_start,
@@ -952,6 +982,91 @@ function toNotification(row) {
       : null,
     linkId: row.link_id || null,
   };
+}
+
+function toRelaySession(row) {
+  return row
+    ? {
+        id: row.id,
+        nodeId: row.node_id,
+        status: row.status,
+        createdAt: row.created_at,
+        closedAt: row.closed_at,
+      }
+    : null;
+}
+
+function toRelayParticipant(row) {
+  return {
+    id: row.user_id || row.id,
+    userId: row.user_identifier || "unknown",
+    userName: row.display_name || row.user_identifier || "unknown",
+    profileIcon: row.profile_icon || "",
+    joinedAt: row.joined_at || row.created_at,
+  };
+}
+
+function toRelayMessage(row) {
+  const reactions = Array.isArray(row.reactions)
+    ? row.reactions
+    : typeof row.reactions === "string"
+      ? JSON.parse(row.reactions || "[]")
+      : [];
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    senderUserId: row.sender_user_id,
+    senderUser: row.sender_user_id
+      ? {
+          id: row.sender_user_id,
+          userId: row.sender_user_identifier || "unknown",
+          userName: row.sender_display_name || row.sender_user_identifier || "unknown",
+          profileIcon: row.sender_profile_icon || "",
+        }
+      : null,
+    body: row.body || "",
+    imageUrl: row.image_url || null,
+    imageMime: row.image_mime || null,
+    imageName: row.image_name || null,
+    reactions: reactions.map((reaction) => ({
+      emoji: reaction.emoji,
+      count: Number(reaction.count || 0),
+      reactedByCurrentUser: Boolean(reaction.reactedByCurrentUser),
+    })),
+    createdAt: row.created_at,
+  };
+}
+
+function getRelayMessageSelectSql(currentUserReference = "$2") {
+  return `
+    select relay_messages.*,
+           users.user_identifier as sender_user_identifier,
+           users.display_name as sender_display_name,
+           users.profile_icon as sender_profile_icon,
+           coalesce(
+             (
+               select json_agg(
+                 json_build_object(
+                   'emoji', reaction_counts.emoji,
+                   'count', reaction_counts.count,
+                   'reactedByCurrentUser', reaction_counts.reacted_by_current_user
+                 )
+                 order by reaction_counts.emoji
+               )
+               from (
+                 select relay_message_reactions.emoji,
+                        count(*)::int as count,
+                        bool_or(relay_message_reactions.user_id = ${currentUserReference}::uuid) as reacted_by_current_user
+                 from relay_message_reactions
+                 where relay_message_reactions.message_id = relay_messages.id
+                 group by relay_message_reactions.emoji
+               ) reaction_counts
+             ),
+             '[]'::json
+           ) as reactions
+    from relay_messages
+    left join users on users.id = relay_messages.sender_user_id
+  `;
 }
 
 async function createNotification(db, { recipientUserId, actorUserId, type, nodeId = null, relatedNodeId = null, clusterId = null, linkId = null }) {
@@ -1375,6 +1490,9 @@ async function getNodeForResponse(nodeId, userId = null) {
              coalesce(node_like_counts.like_count, 0)::int as like_count,
              ($2::uuid is not null and current_user_likes.user_id is not null) as liked_by_current_user,
              ($2::uuid is not null and current_user_favorites.user_id is not null) as favorited_by_current_user,
+             relay_sessions.id as relay_session_id,
+             relay_sessions.status as relay_status,
+             relay_participants.user_id as relay_participant_user_id,
              coalesce(array_agg(node_mega_clusters.mega_cluster_id order by node_mega_clusters.score desc, node_mega_clusters.mega_cluster_id)
                filter (where node_mega_clusters.mega_cluster_id is not null), '{}') as mega_cluster_ids
       from nodes
@@ -1389,9 +1507,14 @@ async function getNodeForResponse(nodeId, userId = null) {
       left join node_favorites current_user_favorites
         on current_user_favorites.node_id = nodes.id
        and current_user_favorites.user_id = $2
+      left join relay_sessions on relay_sessions.node_id = nodes.id
+      left join relay_participants
+        on relay_participants.session_id = relay_sessions.id
+       and relay_participants.user_id = $2
       left join node_mega_clusters on node_mega_clusters.node_id = nodes.id
       where nodes.id = $1
-      group by nodes.id, node_like_counts.like_count, current_user_likes.user_id, current_user_favorites.user_id
+      group by nodes.id, node_like_counts.like_count, current_user_likes.user_id, current_user_favorites.user_id,
+               relay_sessions.id, relay_sessions.status, relay_participants.user_id
     `,
     [nodeId, userId],
   );
@@ -1531,7 +1654,7 @@ async function initDb() {
       id uuid primary key,
       owner_user_id uuid references users(id) on delete set null,
       cluster_id uuid references clusters(id) on delete set null,
-      type text not null check (type in ('text', 'image', 'music', 'video')),
+      type text not null check (type in ('text', 'image', 'music', 'video', 'relay')),
       title text not null,
       body text not null default '',
       duration integer,
@@ -1709,8 +1832,53 @@ async function initDb() {
 
       alter table nodes
       add constraint nodes_type_check
-      check (type in ('text', 'image', 'music', 'video'));
+      check (type in ('text', 'image', 'music', 'video', 'relay'));
     end $$;
+  `);
+
+  await pool.query(`
+    create table if not exists relay_sessions (
+      id uuid primary key,
+      node_id uuid not null unique references nodes(id) on delete cascade,
+      owner_user_id uuid references users(id) on delete set null,
+      status text not null default 'active' check (status in ('active', 'closed')),
+      closed_at timestamptz,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `);
+  await pool.query(`
+    create table if not exists relay_participants (
+      session_id uuid not null references relay_sessions(id) on delete cascade,
+      user_id uuid not null references users(id) on delete cascade,
+      joined_at timestamptz not null default now(),
+      primary key (session_id, user_id)
+    )
+  `);
+  await pool.query(`
+    create table if not exists relay_messages (
+      id uuid primary key,
+      session_id uuid not null references relay_sessions(id) on delete cascade,
+      sender_user_id uuid references users(id) on delete set null,
+      body text not null default '',
+      image_url text,
+      image_mime text,
+      image_name text,
+      created_at timestamptz not null default now()
+    )
+  `);
+  await pool.query(`
+    create index if not exists relay_messages_session_created_idx
+    on relay_messages (session_id, created_at asc)
+  `);
+  await pool.query(`
+    create table if not exists relay_message_reactions (
+      message_id uuid not null references relay_messages(id) on delete cascade,
+      user_id uuid not null references users(id) on delete cascade,
+      emoji text not null,
+      created_at timestamptz not null default now(),
+      primary key (message_id, user_id, emoji)
+    )
   `);
 
   await pool.query(`
@@ -1742,7 +1910,7 @@ async function initDb() {
       id uuid primary key,
       recipient_user_id uuid not null references users(id) on delete cascade,
       actor_user_id uuid references users(id) on delete set null,
-      type text not null check (type in ('node_link', 'node_like', 'node_favorite', 'cluster_follow')),
+      type text not null check (type in ('node_link', 'node_like', 'node_favorite', 'cluster_follow', 'relay_invite')),
       node_id uuid references nodes(id) on delete cascade,
       related_node_id uuid references nodes(id) on delete cascade,
       cluster_id uuid references clusters(id) on delete cascade,
@@ -1750,6 +1918,28 @@ async function initDb() {
       read_at timestamptz,
       created_at timestamptz not null default now()
     )
+  `);
+  await pool.query(`
+    do $$
+    declare
+      constraint_name text;
+    begin
+      select conname
+      into constraint_name
+      from pg_constraint
+      where conrelid = 'notifications'::regclass
+        and contype = 'c'
+        and pg_get_constraintdef(oid) like '%type%'
+      limit 1;
+
+      if constraint_name is not null then
+        execute format('alter table notifications drop constraint %I', constraint_name);
+      end if;
+
+      alter table notifications
+      add constraint notifications_type_check
+      check (type in ('node_link', 'node_like', 'node_favorite', 'cluster_follow', 'relay_invite'));
+    end $$;
   `);
   await pool.query(`
     create index if not exists notifications_recipient_created_idx
@@ -1778,6 +1968,11 @@ async function initDb() {
     create unique index if not exists notifications_cluster_follow_unique
     on notifications (recipient_user_id, actor_user_id, type, cluster_id)
     where type = 'cluster_follow' and cluster_id is not null
+  `);
+  await pool.query(`
+    create unique index if not exists notifications_relay_invite_unique
+    on notifications (recipient_user_id, actor_user_id, type, node_id)
+    where type = 'relay_invite' and node_id is not null
   `);
 
   const { rows } = await pool.query("select count(*)::int as count from nodes");
@@ -2224,6 +2419,9 @@ app.get("/api/state", requireAuth, async (req, res, next) => {
                  coalesce(node_like_counts.like_count, 0)::int as like_count,
                  (current_user_likes.user_id is not null) as liked_by_current_user,
                  (current_user_favorites.user_id is not null) as favorited_by_current_user,
+                 relay_sessions.id as relay_session_id,
+                 relay_sessions.status as relay_status,
+                 relay_participants.user_id as relay_participant_user_id,
                  coalesce(array_agg(node_mega_clusters.mega_cluster_id order by node_mega_clusters.score desc, node_mega_clusters.mega_cluster_id)
                    filter (where node_mega_clusters.mega_cluster_id is not null), '{}') as mega_cluster_ids
           from nodes
@@ -2238,8 +2436,13 @@ app.get("/api/state", requireAuth, async (req, res, next) => {
           left join node_favorites current_user_favorites
             on current_user_favorites.node_id = nodes.id
            and current_user_favorites.user_id = $1
+          left join relay_sessions on relay_sessions.node_id = nodes.id
+          left join relay_participants
+            on relay_participants.session_id = relay_sessions.id
+           and relay_participants.user_id = $1
           left join node_mega_clusters on node_mega_clusters.node_id = nodes.id
-          group by nodes.id, node_like_counts.like_count, current_user_likes.user_id, current_user_favorites.user_id
+          group by nodes.id, node_like_counts.like_count, current_user_likes.user_id, current_user_favorites.user_id,
+                   relay_sessions.id, relay_sessions.status, relay_participants.user_id
           order by nodes.created_at asc
         `,
         [req.user.id],
@@ -2478,6 +2681,104 @@ async function getNodeFavoriteState(nodeId, userId) {
     nodeId,
     favoritedByCurrentUser: Boolean(rows[0]?.favorited_by_current_user),
   };
+}
+
+async function getRelayNodeOrSend(req, res) {
+  const { rows } = await pool.query("select id, owner_user_id, type, title from nodes where id = $1", [req.params.id]);
+  if (rows.length === 0) {
+    res.status(404).json({ error: "Node not found" });
+    return null;
+  }
+  if (rows[0].type !== "relay") {
+    res.status(400).json({ error: "Node is not a relay communication node" });
+    return null;
+  }
+  return rows[0];
+}
+
+async function getRelayPayload(node, userId) {
+  const sessionResult = await pool.query("select * from relay_sessions where node_id = $1", [node.id]);
+  const session = sessionResult.rows[0] || null;
+  const canManage = node.owner_user_id === userId;
+  let participants = [];
+  let messages = [];
+  let likedUsers = [];
+  let isParticipant = false;
+
+  if (session) {
+    const [participantResult, messageResult] = await Promise.all([
+      pool.query(
+        `
+          select relay_participants.user_id,
+                 relay_participants.joined_at,
+                 users.user_identifier,
+                 users.display_name,
+                 users.profile_icon
+          from relay_participants
+          join users on users.id = relay_participants.user_id
+          where relay_participants.session_id = $1
+          order by relay_participants.joined_at asc
+        `,
+        [session.id],
+      ),
+      pool.query(
+        `
+          ${getRelayMessageSelectSql("$2")}
+          where relay_messages.session_id = $1
+          order by relay_messages.created_at asc
+        `,
+        [session.id, userId],
+      ),
+    ]);
+    participants = participantResult.rows.map(toRelayParticipant);
+    messages = messageResult.rows.map(toRelayMessage);
+    isParticipant = participants.some((participant) => participant.id === userId);
+  }
+
+  if (!session && canManage) {
+    const likedResult = await pool.query(
+      `
+        select users.id,
+               users.user_identifier,
+               users.display_name,
+               users.profile_icon,
+               users.bio,
+               users.created_at
+        from node_likes
+        join users on users.id = node_likes.user_id
+        where node_likes.node_id = $1
+          and node_likes.user_id <> $2
+          and users.login_allowed = true
+        order by node_likes.created_at asc
+      `,
+      [node.id, userId],
+    );
+    likedUsers = likedResult.rows.map(toPublicUser);
+  }
+
+  if (!canManage && !isParticipant) {
+    throw createHttpError(403, "Forbidden");
+  }
+
+  return {
+    nodeId: node.id,
+    nodeTitle: node.title,
+    canManage,
+    canParticipate: canManage || isParticipant,
+    readOnly: Boolean(session && session.status === "closed"),
+    session: toRelaySession(session),
+    participants,
+    likedUsers,
+    messages,
+  };
+}
+
+async function userIdsWhoLikedNode(nodeId, ownerUserId) {
+  const { rows } = await pool.query("select user_id from node_likes where node_id = $1 and user_id <> $2", [
+    nodeId,
+    ownerUserId,
+  ]);
+  return new Set(rows.map((row) => row.user_id));
 }
 
 app.get("/api/users/:id", requireAuth, async (req, res, next) => {
@@ -2947,6 +3248,255 @@ app.delete("/api/nodes/:id/favorite", requireAuth, async (req, res, next) => {
   }
 });
 
+app.get("/api/nodes/:id/relay", requireAuth, async (req, res, next) => {
+  try {
+    const node = await getRelayNodeOrSend(req, res);
+    if (!node) return;
+    res.json(await getRelayPayload(node, req.user.id));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/nodes/:id/relay/start", requireAuth, async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const node = await getRelayNodeOrSend(req, res);
+    if (!node) return;
+    if (node.owner_user_id !== req.user.id) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
+    const requestedUserIds = [...new Set((Array.isArray(req.body.userIds) ? req.body.userIds : []).map(String))].filter(
+      (id) => id && id !== req.user.id,
+    );
+    if (requestedUserIds.length === 0) {
+      res.status(400).json({ error: "Select at least one relay recipient" });
+      return;
+    }
+
+    const likedUserIds = await userIdsWhoLikedNode(node.id, req.user.id);
+    if (requestedUserIds.some((id) => !likedUserIds.has(id))) {
+      res.status(400).json({ error: "Relay recipients must be users who liked this node" });
+      return;
+    }
+
+    await client.query("begin");
+    const existingSession = await client.query("select * from relay_sessions where node_id = $1 for update", [node.id]);
+    let session = existingSession.rows[0] || null;
+    if (!session) {
+      const { rows } = await client.query(
+        `
+          insert into relay_sessions (id, node_id, owner_user_id)
+          values ($1, $2, $3)
+          returning *
+        `,
+        [crypto.randomUUID(), node.id, req.user.id],
+      );
+      session = rows[0];
+      for (const userId of [req.user.id, ...requestedUserIds]) {
+        await client.query(
+          `
+            insert into relay_participants (session_id, user_id)
+            values ($1, $2)
+            on conflict do nothing
+          `,
+          [session.id, userId],
+        );
+      }
+      for (const userId of requestedUserIds) {
+        await createNotification(client, {
+          recipientUserId: userId,
+          actorUserId: req.user.id,
+          type: "relay_invite",
+          nodeId: node.id,
+        });
+      }
+    }
+    await client.query("commit");
+    res.status(existingSession.rows.length ? 200 : 201).json(await getRelayPayload(node, req.user.id));
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.post("/api/nodes/:id/relay/messages", requireAuth, parseMultipartForm, async (req, res, next) => {
+  let mediaPath = null;
+  try {
+    const node = await getRelayNodeOrSend(req, res);
+    if (!node) return;
+    const sessionResult = await pool.query("select * from relay_sessions where node_id = $1", [node.id]);
+    const session = sessionResult.rows[0];
+    if (!session) {
+      res.status(404).json({ error: "Relay session not found" });
+      return;
+    }
+    if (session.status === "closed") {
+      res.status(400).json({ error: "Relay session is closed" });
+      return;
+    }
+    const participantResult = await pool.query(
+      "select 1 from relay_participants where session_id = $1 and user_id = $2",
+      [session.id, req.user.id],
+    );
+    if (participantResult.rows.length === 0 && node.owner_user_id !== req.user.id) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
+    const body = String(req.body.body || "").replace(/\r\n/g, "\n").trim();
+    if (!isWithinTextLimit(body, inputLimits.longText)) {
+      sendTextLimitError(res, "Message", inputLimits.longText);
+      return;
+    }
+    const storedImage = req.file ? storeRelayImageFile(req.file) : null;
+    mediaPath = storedImage?.mediaPath || null;
+    if (!body && !storedImage) {
+      res.status(400).json({ error: "Message body or image is required" });
+      return;
+    }
+
+    const { rows } = await pool.query(
+      `
+        insert into relay_messages (id, session_id, sender_user_id, body, image_url, image_mime, image_name)
+        values ($1, $2, $3, $4, $5, $6, $7)
+        returning *
+      `,
+      [
+        crypto.randomUUID(),
+        session.id,
+        req.user.id,
+        body,
+        storedImage?.imageUrl || null,
+        storedImage?.imageMime || null,
+        storedImage?.imageName || null,
+      ],
+    );
+    mediaPath = null;
+    const messageResult = await pool.query(
+      `
+        ${getRelayMessageSelectSql("$2")}
+        where relay_messages.id = $1
+      `,
+      [rows[0].id, req.user.id],
+    );
+    res.status(201).json(toRelayMessage(messageResult.rows[0]));
+  } catch (error) {
+    if (mediaPath) {
+      fs.unlink(mediaPath, () => {});
+    }
+    next(error);
+  }
+});
+
+app.put("/api/nodes/:id/relay/messages/:messageId/reactions", requireAuth, async (req, res, next) => {
+  try {
+    const allowedEmojis = new Set(["👍", "❤️", "😂", "😮", "😢", "🎉"]);
+    const emoji = String(req.body.emoji || "").trim();
+    if (!allowedEmojis.has(emoji)) {
+      res.status(400).json({ error: "Invalid reaction emoji" });
+      return;
+    }
+
+    const node = await getRelayNodeOrSend(req, res);
+    if (!node) return;
+    const messageResult = await pool.query(
+      `
+        select relay_messages.id,
+               relay_messages.session_id,
+               relay_messages.sender_user_id,
+               relay_sessions.status
+        from relay_messages
+        join relay_sessions on relay_sessions.id = relay_messages.session_id
+        where relay_messages.id = $1
+          and relay_sessions.node_id = $2
+      `,
+      [req.params.messageId, node.id],
+    );
+    const message = messageResult.rows[0];
+    if (!message) {
+      res.status(404).json({ error: "Message not found" });
+      return;
+    }
+    if (message.status === "closed") {
+      res.status(400).json({ error: "Relay session is closed" });
+      return;
+    }
+    if (message.sender_user_id === req.user.id) {
+      res.status(400).json({ error: "Cannot react to your own message" });
+      return;
+    }
+    const participantResult = await pool.query(
+      "select 1 from relay_participants where session_id = $1 and user_id = $2",
+      [message.session_id, req.user.id],
+    );
+    if (participantResult.rows.length === 0 && node.owner_user_id !== req.user.id) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
+    const existing = await pool.query(
+      "select 1 from relay_message_reactions where message_id = $1 and user_id = $2 and emoji = $3",
+      [message.id, req.user.id, emoji],
+    );
+    if (existing.rows.length > 0) {
+      await pool.query("delete from relay_message_reactions where message_id = $1 and user_id = $2 and emoji = $3", [
+        message.id,
+        req.user.id,
+        emoji,
+      ]);
+    } else {
+      await pool.query(
+        `
+          insert into relay_message_reactions (message_id, user_id, emoji)
+          values ($1, $2, $3)
+          on conflict do nothing
+        `,
+        [message.id, req.user.id, emoji],
+      );
+    }
+
+    const updatedMessage = await pool.query(
+      `
+        ${getRelayMessageSelectSql("$2")}
+        where relay_messages.id = $1
+      `,
+      [message.id, req.user.id],
+    );
+    res.json(toRelayMessage(updatedMessage.rows[0]));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/nodes/:id/relay/close", requireAuth, async (req, res, next) => {
+  try {
+    const node = await getRelayNodeOrSend(req, res);
+    if (!node) return;
+    if (node.owner_user_id !== req.user.id) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    await pool.query(
+      `
+        update relay_sessions
+        set status = 'closed',
+            closed_at = coalesce(closed_at, now()),
+            updated_at = now()
+        where node_id = $1
+      `,
+      [node.id],
+    );
+    res.json(await getRelayPayload(node, req.user.id));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) => {
   let mediaPath = null;
   let tempMediaPath = null;
@@ -2963,7 +3513,7 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
       clusterId = userPublicCluster.id,
       originNodeId = null,
     } = req.body;
-    if (!["text", "image", "music", "video"].includes(type)) {
+    if (!["text", "image", "music", "video", "relay"].includes(type)) {
       res.status(400).json({ error: "Invalid node type" });
       return;
     }
@@ -2978,8 +3528,8 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
       return;
     }
 
-    if (req.file && type === "text") {
-      res.status(400).json({ error: "Text nodes cannot include media files" });
+    if (req.file && (type === "text" || type === "relay")) {
+      res.status(400).json({ error: "Text and relay nodes cannot include media files" });
       return;
     }
 
@@ -3034,7 +3584,7 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
 
     const parsedSelection = parseSelection(selection);
 
-    const max = type === "text" ? safeBody.length : type === "image" ? 0 : Number(duration || 0);
+    const max = type === "text" || type === "relay" ? safeBody.length : type === "image" ? 0 : Number(duration || 0);
     const selectionStart = clamp(Number(parsedSelection?.start ?? 0), 0, max);
     const selectionEnd = clamp(Number(parsedSelection?.end ?? max), selectionStart, max);
     const { rows: clusterRows } = await pool.query("select id, description from clusters where id = $1 and owner_user_id = $2", [
@@ -3116,7 +3666,7 @@ app.patch("/api/nodes/:id/selection", requireAuth, async (req, res, next) => {
       [req.params.id, selectionStart, selectionEnd],
     );
 
-    res.json(toNode(rows[0]));
+    res.json((await getNodeForResponse(rows[0].id, req.user.id)) || toNode(rows[0]));
   } catch (error) {
     next(error);
   }
@@ -3145,7 +3695,7 @@ app.patch("/api/nodes/:id/position", requireAuth, async (req, res, next) => {
       return;
     }
 
-    res.json(toNode(rows[0]));
+    res.json((await getNodeForResponse(rows[0].id, req.user.id)) || toNode(rows[0]));
   } catch (error) {
     next(error);
   }
@@ -3194,7 +3744,21 @@ app.patch("/api/nodes/:id/cluster", requireAuth, async (req, res, next) => {
 
 app.delete("/api/nodes/:id", requireAuth, async (req, res, next) => {
   try {
-    const existing = await pool.query("select media_url, owner_user_id from nodes where id = $1", [req.params.id]);
+    const existing = await pool.query(
+      `
+        select nodes.media_url,
+               nodes.owner_user_id,
+               (
+                 select coalesce(array_agg(relay_messages.image_url) filter (where relay_messages.image_url is not null), '{}')
+                 from relay_sessions
+                 join relay_messages on relay_messages.session_id = relay_sessions.id
+                 where relay_sessions.node_id = nodes.id
+               ) as relay_image_urls
+        from nodes
+        where nodes.id = $1
+      `,
+      [req.params.id],
+    );
     if (existing.rows.length === 0) {
       res.sendStatus(404);
       return;
@@ -3212,6 +3776,9 @@ app.delete("/api/nodes/:id", requireAuth, async (req, res, next) => {
       if (mediaPath.startsWith(uploadDir)) {
         fs.unlink(mediaPath, () => {});
       }
+    }
+    for (const relayImageUrl of existing.rows[0].relay_image_urls || []) {
+      unlinkUploadedFile(relayImageUrl);
     }
 
     res.sendStatus(204);
