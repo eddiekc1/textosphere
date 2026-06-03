@@ -1165,6 +1165,7 @@ function normalizeNode(node) {
     likeCount: Number(node.likeCount || 0),
     likedByCurrentUser: Boolean(node.likedByCurrentUser),
     favoritedByCurrentUser: Boolean(node.favoritedByCurrentUser),
+    fixedFavoriteByCurrentUser: Boolean(node.fixedFavoriteByCurrentUser),
     relaySessionId: node.relaySessionId || null,
     relayStatus: node.relayStatus || null,
     relayParticipant: Boolean(node.relayParticipant),
@@ -3957,6 +3958,7 @@ async function createNodeFromValues({ type, title, body, duration, mediaFile, cl
     likeCount: 0,
     likedByCurrentUser: false,
     favoritedByCurrentUser: false,
+    fixedFavoriteByCurrentUser: false,
     selection: getDefaultSelection(type, safeBody, safeDuration),
     x: position.x,
     y: position.y,
@@ -4905,11 +4907,17 @@ function renderNodeFavoriteAction(node) {
   if (!currentUser || node.ownerUserId === currentUser.id) return "";
   const pressed = node.favoritedByCurrentUser ? "true" : "false";
   const className = node.favoritedByCurrentUser ? "node-favorite-button is-favorited" : "node-favorite-button";
+  const disabled = node.fixedFavoriteByCurrentUser ? "disabled" : "";
+  const label = node.fixedFavoriteByCurrentUser
+    ? "固定お気に入り"
+    : node.favoritedByCurrentUser
+      ? "お気に入り解除"
+      : "お気に入りに追加";
   return `
     <section class="node-favorite-panel" aria-label="favorite node">
-      <button class="${className}" id="detailFavoriteButton" type="button" aria-pressed="${pressed}">
+      <button class="${className}" id="detailFavoriteButton" type="button" aria-pressed="${pressed}" ${disabled}>
         <span class="node-favorite-icon" aria-hidden="true">★</span>
-        <span>${node.favoritedByCurrentUser ? "お気に入り解除" : "お気に入りに追加"}</span>
+        <span>${label}</span>
       </button>
     </section>
   `;
@@ -5567,12 +5575,14 @@ function updateNodeLikeState(id, likeCount, likedByCurrentUser) {
   );
 }
 
-function updateNodeFavoriteState(id, favoritedByCurrentUser) {
+function updateNodeFavoriteState(id, favoritedByCurrentUser, fixedFavoriteByCurrentUser = null) {
   nodes = nodes.map((node) =>
     node.id === id
       ? {
           ...node,
           favoritedByCurrentUser: Boolean(favoritedByCurrentUser),
+          fixedFavoriteByCurrentUser:
+            fixedFavoriteByCurrentUser === null ? node.fixedFavoriteByCurrentUser : Boolean(fixedFavoriteByCurrentUser),
         }
       : node,
   );
@@ -5596,9 +5606,12 @@ function refreshDetailFavoriteButton(id) {
 
   favoriteButton.classList.toggle("is-favorited", node.favoritedByCurrentUser);
   favoriteButton.setAttribute("aria-pressed", String(node.favoritedByCurrentUser));
-  favoriteButton.querySelector("span:last-child").textContent = node.favoritedByCurrentUser
-    ? "お気に入り解除"
-    : "お気に入りに追加";
+  favoriteButton.disabled = Boolean(node.fixedFavoriteByCurrentUser);
+  favoriteButton.querySelector("span:last-child").textContent = node.fixedFavoriteByCurrentUser
+    ? "固定お気に入り"
+    : node.favoritedByCurrentUser
+      ? "お気に入り解除"
+      : "お気に入りに追加";
 }
 
 async function toggleNodeLike(id) {
@@ -5629,7 +5642,7 @@ async function toggleNodeLike(id) {
 
 async function toggleNodeFavorite(id) {
   const node = nodes.find((item) => item.id === id);
-  if (!node || !currentUser || node.ownerUserId === currentUser.id) return;
+  if (!node || !currentUser || node.ownerUserId === currentUser.id || node.fixedFavoriteByCurrentUser) return;
 
   const nextFavorited = !node.favoritedByCurrentUser;
   updateNodeFavoriteState(id, nextFavorited);
@@ -5645,7 +5658,7 @@ async function toggleNodeFavorite(id) {
     const result = await apiRequest(`/nodes/${id}/favorite`, {
       method: nextFavorited ? "PUT" : "DELETE",
     });
-    updateNodeFavoriteState(id, result.favoritedByCurrentUser);
+    updateNodeFavoriteState(id, result.favoritedByCurrentUser, result.fixedFavoriteByCurrentUser);
     refreshDetailFavoriteButton(id);
     refreshScopeViews();
   } catch (error) {

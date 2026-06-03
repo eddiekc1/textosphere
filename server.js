@@ -846,7 +846,8 @@ function toNode(row) {
     shareEnabled: row.share_enabled !== false,
     likeCount: Number(row.like_count || 0),
     likedByCurrentUser: Boolean(row.liked_by_current_user),
-    favoritedByCurrentUser: Boolean(row.favorited_by_current_user),
+    favoritedByCurrentUser: Boolean(row.favorited_by_current_user || row.fixed_favorite_by_current_user),
+    fixedFavoriteByCurrentUser: Boolean(row.fixed_favorite_by_current_user),
     relaySessionId: row.relay_session_id || null,
     relayStatus: row.relay_status || null,
     relayParticipant: Boolean(row.relay_participant_user_id),
@@ -1489,7 +1490,11 @@ async function getNodeForResponse(nodeId, userId = null) {
       select nodes.*,
              coalesce(node_like_counts.like_count, 0)::int as like_count,
              ($2::uuid is not null and current_user_likes.user_id is not null) as liked_by_current_user,
-             ($2::uuid is not null and current_user_favorites.user_id is not null) as favorited_by_current_user,
+             (
+               $2::uuid is not null
+               and (current_user_favorites.user_id is not null or fixed_node_favorites.node_id is not null)
+             ) as favorited_by_current_user,
+             ($2::uuid is not null and fixed_node_favorites.node_id is not null) as fixed_favorite_by_current_user,
              relay_sessions.id as relay_session_id,
              relay_sessions.status as relay_status,
              relay_participants.user_id as relay_participant_user_id,
@@ -1507,6 +1512,7 @@ async function getNodeForResponse(nodeId, userId = null) {
       left join node_favorites current_user_favorites
         on current_user_favorites.node_id = nodes.id
        and current_user_favorites.user_id = $2
+      left join fixed_node_favorites on fixed_node_favorites.node_id = nodes.id
       left join relay_sessions on relay_sessions.node_id = nodes.id
       left join relay_participants
         on relay_participants.session_id = relay_sessions.id
@@ -1514,6 +1520,7 @@ async function getNodeForResponse(nodeId, userId = null) {
       left join node_mega_clusters on node_mega_clusters.node_id = nodes.id
       where nodes.id = $1
       group by nodes.id, node_like_counts.like_count, current_user_likes.user_id, current_user_favorites.user_id,
+               fixed_node_favorites.node_id,
                relay_sessions.id, relay_sessions.status, relay_participants.user_id
     `,
     [nodeId, userId],
@@ -1759,6 +1766,12 @@ async function initDb() {
       node_id uuid not null references nodes(id) on delete cascade,
       created_at timestamptz not null default now(),
       primary key (user_id, node_id)
+    )
+  `);
+  await pool.query(`
+    create table if not exists fixed_node_favorites (
+      node_id uuid primary key references nodes(id) on delete cascade,
+      created_at timestamptz not null default now()
     )
   `);
   await pool.query(`
@@ -2418,7 +2431,8 @@ app.get("/api/state", requireAuth, async (req, res, next) => {
           select nodes.*,
                  coalesce(node_like_counts.like_count, 0)::int as like_count,
                  (current_user_likes.user_id is not null) as liked_by_current_user,
-                 (current_user_favorites.user_id is not null) as favorited_by_current_user,
+                 (current_user_favorites.user_id is not null or fixed_node_favorites.node_id is not null) as favorited_by_current_user,
+                 (fixed_node_favorites.node_id is not null) as fixed_favorite_by_current_user,
                  relay_sessions.id as relay_session_id,
                  relay_sessions.status as relay_status,
                  relay_participants.user_id as relay_participant_user_id,
@@ -2436,12 +2450,14 @@ app.get("/api/state", requireAuth, async (req, res, next) => {
           left join node_favorites current_user_favorites
             on current_user_favorites.node_id = nodes.id
            and current_user_favorites.user_id = $1
+          left join fixed_node_favorites on fixed_node_favorites.node_id = nodes.id
           left join relay_sessions on relay_sessions.node_id = nodes.id
           left join relay_participants
             on relay_participants.session_id = relay_sessions.id
            and relay_participants.user_id = $1
           left join node_mega_clusters on node_mega_clusters.node_id = nodes.id
           group by nodes.id, node_like_counts.like_count, current_user_likes.user_id, current_user_favorites.user_id,
+                   fixed_node_favorites.node_id,
                    relay_sessions.id, relay_sessions.status, relay_participants.user_id
           order by nodes.created_at asc
         `,
@@ -2673,13 +2689,18 @@ async function getNodeLikeState(nodeId, userId) {
 async function getNodeFavoriteState(nodeId, userId) {
   const { rows } = await pool.query(
     `
-      select exists(select 1 from node_favorites where node_id = $1 and user_id = $2) as favorited_by_current_user
+      select
+        exists(select 1 from node_favorites where node_id = $1 and user_id = $2) as user_favorited_by_current_user,
+        exists(select 1 from fixed_node_favorites where node_id = $1) as fixed_favorite_by_current_user
     `,
     [nodeId, userId],
   );
+  const userFavorited = Boolean(rows[0]?.user_favorited_by_current_user);
+  const fixedFavorite = Boolean(rows[0]?.fixed_favorite_by_current_user);
   return {
     nodeId,
-    favoritedByCurrentUser: Boolean(rows[0]?.favorited_by_current_user),
+    favoritedByCurrentUser: userFavorited || fixedFavorite,
+    fixedFavoriteByCurrentUser: fixedFavorite,
   };
 }
 
@@ -2791,7 +2812,8 @@ app.get("/api/users/:id", requireAuth, async (req, res, next) => {
           select nodes.*,
                  coalesce(node_like_counts.like_count, 0)::int as like_count,
                  (current_user_likes.user_id is not null) as liked_by_current_user,
-                 (current_user_favorites.user_id is not null) as favorited_by_current_user,
+                 (current_user_favorites.user_id is not null or fixed_node_favorites.node_id is not null) as favorited_by_current_user,
+                 (fixed_node_favorites.node_id is not null) as fixed_favorite_by_current_user,
                  coalesce(array_agg(node_mega_clusters.mega_cluster_id order by node_mega_clusters.score desc, node_mega_clusters.mega_cluster_id)
                    filter (where node_mega_clusters.mega_cluster_id is not null), '{}') as mega_cluster_ids
           from nodes
@@ -2806,9 +2828,11 @@ app.get("/api/users/:id", requireAuth, async (req, res, next) => {
           left join node_favorites current_user_favorites
             on current_user_favorites.node_id = nodes.id
            and current_user_favorites.user_id = $2
+          left join fixed_node_favorites on fixed_node_favorites.node_id = nodes.id
           left join node_mega_clusters on node_mega_clusters.node_id = nodes.id
           where nodes.owner_user_id = $1
-          group by nodes.id, node_like_counts.like_count, current_user_likes.user_id, current_user_favorites.user_id
+          group by nodes.id, node_like_counts.like_count, current_user_likes.user_id, current_user_favorites.user_id,
+                   fixed_node_favorites.node_id
           order by nodes.created_at desc
         `,
         [req.params.id, req.user.id],
