@@ -20,7 +20,7 @@ jobs:
         with:
           switches: -avz --delete
           path: /
-          remote_path: /www/
+          remote_path: /home/textosphere/www/
           remote_host: ${{ secrets.SSH_HOST }}
           remote_user: ${{ secrets.SSH_USER }}
           remote_key: ${{ secrets.SSH_PRIVATE_KEY }}
