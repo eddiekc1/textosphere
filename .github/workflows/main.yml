@@ -18,7 +18,7 @@ jobs:
       - name: Deploy with rsync
         uses: Burnett01/rsync-deployments@v8
         with:
-          switches: -avz --delete
+          switches: -avz
           path: /
           remote_path: /home/textosphere/www/
           remote_host: ${{ secrets.SSH_HOST }}
