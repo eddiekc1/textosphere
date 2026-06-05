@@ -145,19 +145,575 @@ const MAX_UPLOAD_BYTES = 30 * 1024 * 1024;
 const MAX_UPLOAD_MB = 30;
 const MAX_VIDEO_UPLOAD_BYTES = 80 * 1024 * 1024;
 const MAX_VIDEO_UPLOAD_MB = 80;
+const LOCALE_STORAGE_KEY = "textosphereLocale";
+const SUPPORTED_LOCALES = ["en", "ja"];
+
+const i18n = {
+  en: {
+    "common.cancel": "Cancel",
+    "common.close": "Close",
+    "common.clear": "Clear",
+    "common.save": "Save",
+    "common.all": "All",
+    "common.own": "Own",
+    "common.following": "Following",
+    "common.followingShort": "Following",
+    "common.favorites": "Favorites",
+    "common.none": "None",
+    "common.empty": "Empty",
+    "common.enabled": "Enabled",
+    "common.disabled": "Disabled",
+    "common.loading": "Loading",
+    "common.copy": "Copy",
+    "common.copied": "Copied",
+    "common.delete": "Delete",
+    "common.file": "File",
+    "common.open": "Open",
+    "common.block": "Block",
+    "common.unblock": "Unblock",
+    "common.logout": "Log out",
+    "locale.label": "Language",
+    "locale.english": "English",
+    "locale.japanese": "Japanese",
+    "nav.menu": "Menu",
+    "nav.hideSidebar": "Hide sidebar",
+    "nav.showSidebar": "Show sidebar",
+    "composer.createPost": "Create post",
+    "composer.newNode": "New node",
+    "composer.addNode": "Add node",
+    "composer.addFromNode": "Add from this node",
+    "composer.addAndConnect": "Add node and connect",
+    "type.text": "Text",
+    "type.image": "Image",
+    "type.music": "Music",
+    "type.video": "Video",
+    "type.relay": "Relay",
+    "node.listTitle": "Nodes",
+    "node.listTabs": "Node list view",
+    "node.type": "Type",
+    "node.title": "Title",
+    "node.titlePlaceholder": "A memory fragment, song title, video title",
+    "node.newTitlePlaceholder": "New node title",
+    "node.body": "Body",
+    "node.bodyPlaceholder": "Enter body text",
+    "node.addButton": "Add node",
+    "node.delete": "Delete node",
+    "node.noBody": "No body",
+    "node.emptyOwn": "No nodes yet",
+    "node.emptyFollowing": "No nodes from followed clusters yet",
+    "node.emptyFavorites": "No favorite nodes yet",
+    "node.open": "Open node",
+    "node.createdAt": "Created at {date}",
+    "node.connectionCount": "Connections {count}",
+    "node.tempLimit": "You can keep up to {limit} nodes in the temporary area.",
+    "node.restoreFromTemporary": "Take {title} out of the temporary area",
+    "node.deleteConfirm": "Delete this node?",
+    "node.sourceNodes": "Source nodes",
+    "node.targetNodes": "Target nodes",
+    "cluster.type": "Cluster",
+    "cluster.listTitle": "Clusters",
+    "cluster.listTabs": "Cluster list view",
+    "cluster.newCluster": "New cluster",
+    "cluster.name": "Cluster name",
+    "cluster.description": "Description",
+    "cluster.descriptionPlaceholder": "Enter a description",
+    "cluster.addCluster": "Add cluster",
+    "cluster.noDescription": "No description",
+    "cluster.noClusters": "No clusters yet",
+    "cluster.follow": "Follow",
+    "cluster.followTitle": "Follow cluster",
+    "cluster.followers": "Followers {count}",
+    "cluster.delete": "Delete cluster",
+    "cluster.deleteConfirm": "Delete this cluster?\nNodes in the cluster will move to the Public cluster.",
+    "cluster.deleteError": "Unable to delete the cluster. Please try again later.",
+    "cluster.moveError": "Unable to move the node to another cluster. Please try again later.",
+    "cluster.move": "Move",
+    "cluster.moveTo": "Move to",
+    "cluster.noMoveTarget": "No destination",
+    "cluster.cannotMove": "Cannot move",
+    "cluster.otherUserNode": "Another user's node",
+    "cluster.nodes": "Cluster nodes",
+    "home.button": "Home",
+    "home.moveTitle": "Move to home",
+    "home.notSetTitle": "Home is not set yet",
+    "home.saveButton": "Set home here",
+    "home.saveTitle": "Set this place as home",
+    "home.saving": "Saving",
+    "home.saved": "Saved",
+    "home.saveError": "Unable to save home",
+    "universe.aria": "Information star map",
+    "universe.context": "Context",
+    "universe.explore": "Explore",
+    "universe.switchToContext": "Switch to context mode",
+    "universe.switchToExplore": "Switch to explore mode",
+    "universe.coordinate": "Coordinates {x}, {y}",
+    "temporary.aria": "Temporary area",
+    "temporary.title": "Temporary",
+    "temporary.restore": "Restore",
+    "search.title": "Search",
+    "search.show": "Show search",
+    "search.hide": "Hide search",
+    "search.kind": "Kind",
+    "search.word": "Word",
+    "search.wordPlaceholder": "Title, body, user name, bio, cluster name, cluster description",
+    "search.sort": "Sort",
+    "search.order": "Order",
+    "search.createdAt": "Created at",
+    "search.likeCount": "Likes",
+    "search.connectionCount": "Connections",
+    "search.followerCount": "Followers",
+    "search.desc": "Descending",
+    "search.asc": "Ascending",
+    "search.noResults": "No results found",
+    "search.showMore": "Show 20 more",
+    "media.dropFile": "Drop file",
+    "media.dropAny": "Drag and drop a file here",
+    "media.dropImage": "Drag and drop a PNG/JPG/GIF here",
+    "media.dropMusic": "Drag and drop an MP3 here",
+    "media.dropVideo": "Drag and drop an MP4 here",
+    "media.pasteImage": "Paste image",
+    "media.pasteHint": "Click here and press Ctrl+V to paste",
+    "media.pasted": "Pasted {name}",
+    "media.dropped": "Dropped {name}",
+    "media.unsupported": "This file cannot be used for the selected type.",
+    "media.duration": "Duration",
+    "media.seconds": "sec",
+    "media.selectFile": "Choose file",
+    "media.noFile": "No file selected",
+    "media.relayImage": "Relay image",
+    "link.previewLoading": "Loading link preview",
+    "link.defaultTitle": "Link",
+    "connection.type": "Connection",
+    "connection.connectTitle": "Connect nodes",
+    "connection.editTitle": "Edit connection comment",
+    "connection.commentTitle": "Connection comment",
+    "connection.summary": "Connect {source} to {target}",
+    "connection.commentSummary": "Comment from {source} to {target}",
+    "connection.comment": "Comment",
+    "connection.commentPlaceholder": "Add a comment to this connection",
+    "connection.connectButton": "Connect",
+    "connection.disconnect": "Disconnect",
+    "connection.save": "Save",
+    "connection.cannotEdit": "This connection cannot be created or edited.",
+    "connection.cannotCreate": "This connection cannot be created.",
+    "connection.kind": "Connection",
+    "profile.emptyBio": "Bio is not set.",
+    "profile.bioHeading": "Bio",
+    "profile.userClusters": "Clusters",
+    "profile.userNodes": "Nodes",
+    "profile.deleteUser": "Delete user",
+    "profile.editProfile": "Edit profile",
+    "profile.noUserDetail": "Unable to show user details",
+    "profile.blockConfirm": "This user will no longer be able to create connections to your nodes. Existing connections created by this user will also be deleted. Continue?",
+    "profile.blockError": "Unable to block",
+    "profile.unblockError": "Unable to unblock",
+    "profile.deleteConfirm": "Delete your user account? This cannot be undone. Your posts, clusters, connections, and login information will also be deleted.",
+    "profile.deleteError": "Unable to delete the user. Please try again later.",
+    "favorite.pinned": "Pinned favorite",
+    "favorite.remove": "Remove favorite",
+    "favorite.add": "Add favorite",
+    "share.title": "Share",
+    "share.panelTitle": "Share",
+    "share.enabled": "Share enabled",
+    "share.disabled": "Share disabled",
+    "share.publicLinks": "View public links",
+    "share.settings": "Share settings",
+    "share.links": "Share links",
+    "share.loading": "Loading share settings",
+    "share.loadError": "Unable to load share settings",
+    "share.allow": "Allow sharing this node",
+    "share.disableNote": "When disabled, new share links cannot be created and existing links cannot be viewed.",
+    "share.range": "Share range",
+    "share.context": "Share with context",
+    "share.contextHint": "Show source/target nodes and connection comments too",
+    "share.single": "Share this node only",
+    "share.singleHint": "Show only the body and media",
+    "share.create": "Create share link",
+    "share.ownerLinks": "Showing share links published by the node owner.",
+    "share.nodeOnly": "Node only",
+    "share.withContext": "With context",
+    "share.disabledStatus": "Disabled",
+    "share.enabledStatus": "Enabled",
+    "share.noLinks": "No share links yet",
+    "share.noPublicLinks": "No public share links yet",
+    "share.urlLabel": "Share URL",
+    "share.disable": "Disable",
+    "share.saveError": "Unable to save share settings. Please try again later.",
+    "share.createError": "Unable to create a share link. Check whether sharing is enabled.",
+    "share.disableConfirm": "Disable this share link?",
+    "share.disableError": "Unable to disable the share link. Please try again later.",
+    "relay.start": "Start relay",
+    "relay.viewLog": "View relay log",
+    "relay.closed": "Relay has ended",
+    "relay.active": "Relay active",
+    "relay.private": "Visible only to relay participants",
+    "relay.selectable": "You can choose relay recipients",
+    "relay.ownerStarts": "Available when the owner starts a relay",
+    "relay.recipients": "Recipients",
+    "relay.peopleCount": "{count} users",
+    "relay.noLikedUsers": "No users have liked this node yet",
+    "relay.confirmRecipients": "Confirm",
+    "relay.readonly": "Relay log is read-only",
+    "relay.messagePlaceholder": "Enter a message",
+    "relay.send": "Send",
+    "relay.loading": "Loading relay",
+    "relay.self": "You",
+    "relay.chat": "Chat",
+    "relay.noMessages": "No messages yet",
+    "relay.selectThenStart": "Select recipients and confirm to start the relay",
+    "relay.others": "Participants",
+    "relay.undecided": "Not decided",
+    "relay.close": "End relay",
+    "relay.openError": "Unable to open relay",
+    "relay.reactionError": "Unable to send reaction",
+    "relay.selectError": "Select at least one recipient",
+    "relay.startError": "Unable to start relay",
+    "relay.messageError": "Unable to send message",
+    "relay.closeConfirm": "End the relay on this node?",
+    "relay.closeError": "Unable to end relay",
+    "notification.trigger": "Notifications",
+    "notification.listTitle": "Notifications",
+    "notification.markAllRead": "Mark all read",
+    "notification.empty": "No notifications yet",
+    "notification.more": "Show next 20",
+    "notification.someone": "Someone",
+    "notification.yourNode": "your node",
+    "notification.relatedNode": "another node",
+    "notification.yourCluster": "your cluster",
+    "notification.relayInvite": "{actor} invited you to a relay",
+    "notification.linkCreated": "{actor} connected \"{related}\" to \"{node}\"",
+    "notification.like": "{actor} liked \"{node}\"",
+    "notification.favorite": "{actor} added \"{node}\" to favorites",
+    "notification.clusterFollow": "{actor} followed cluster \"{cluster}\"",
+    "notification.generic": "You have a new notification",
+    "notification.openNode": "Open node",
+    "notification.openCluster": "Open cluster",
+    "processing.addingNode": "Adding node",
+    "processing.uploadSave": "Uploading and saving. Please keep this screen open.",
+    "processing.saveNode": "Saving node.",
+    "processing.uploadConnect": "Uploading and connecting. Please keep this screen open.",
+    "processing.saveConnect": "Saving and connecting node.",
+    "auth.brandStatement": "Connect points into lines.",
+    "auth.loginTitle": "Log in",
+    "auth.loginIdLabel": "Email address / User ID",
+    "auth.passwordLabel": "Password",
+    "auth.loginButton": "Log in",
+    "auth.signupTitle": "Create account",
+    "auth.emailLabel": "Email address",
+    "auth.userNameLabel": "Display name",
+    "auth.userNamePlaceholder": "Display name",
+    "auth.userIdLabel": "User ID",
+    "auth.userIdPlaceholder": "Letters, numbers, _, -",
+    "auth.userIdHint": "Letters, numbers, _, and - only. 1-25 characters. You can use this to log in.",
+    "auth.passwordHint":
+      "8-25 characters. Use at least 3 of these: uppercase letters, lowercase letters, numbers, symbols (_ - ! # $ % ( ) [ ] @ + * ? /).",
+    "auth.passwordHintShort": "8-25 characters. Use at least 3 of these: uppercase letters, lowercase letters, numbers, symbols.",
+    "auth.birthDateLabel": "Birth date",
+    "auth.birthDateHint": "This is not public.",
+    "auth.profileIconLabel": "Profile icon",
+    "auth.bioLabel": "Bio",
+    "auth.bioPlaceholder": "Bio",
+    "auth.signupButton": "Create account",
+    "auth.errorLogin": "Unable to log in. Check your email address, password, and login permission.",
+    "auth.errorSignup": "Unable to create the account. Check your User ID, email address, and password requirements.",
+    "profile.type": "User",
+    "profile.title": "Edit profile",
+    "profile.passwordPlaceholder": "Leave blank to keep current password",
+    "profile.passwordHint":
+      "Leave blank to keep current password. To change it, use 8-25 characters and at least 3 of these: uppercase letters, lowercase letters, numbers, symbols (_ - ! # $ % ( ) [ ] @ + * ? /).",
+    "profile.passwordHintShort": "Leave blank to keep current password. To change it, use 8-25 characters and at least 3 character types.",
+    "profile.errorSave": "Unable to save the profile. Check your User ID and password requirements.",
+    "upload.limit": "Please keep the file size at {mb}MB or less.",
+  },
+  ja: {
+    "common.cancel": "キャンセル",
+    "common.close": "閉じる",
+    "common.clear": "解除",
+    "common.save": "保存",
+    "common.all": "すべて",
+    "common.own": "自分",
+    "common.following": "フォロー中",
+    "common.followingShort": "フォロー",
+    "common.favorites": "お気に入り",
+    "common.none": "なし",
+    "common.empty": "空",
+    "common.enabled": "有効",
+    "common.disabled": "無効",
+    "common.loading": "読み込み中",
+    "common.copy": "コピー",
+    "common.copied": "コピー済み",
+    "common.delete": "削除",
+    "common.file": "ファイル",
+    "common.open": "開く",
+    "common.block": "ブロック",
+    "common.unblock": "ブロック解除",
+    "common.logout": "ログアウト",
+    "locale.label": "言語",
+    "locale.english": "英語",
+    "locale.japanese": "日本語",
+    "nav.menu": "メニュー",
+    "nav.hideSidebar": "左サイドバーを隠す",
+    "nav.showSidebar": "左サイドバーを表示",
+    "composer.createPost": "投稿作成",
+    "composer.newNode": "新しい光点",
+    "composer.addNode": "光点を追加",
+    "composer.addFromNode": "この光点から追加",
+    "composer.addAndConnect": "光点を追加して線で繋ぐ",
+    "type.text": "テキスト",
+    "type.image": "画像",
+    "type.music": "音楽",
+    "type.video": "映像",
+    "type.relay": "中継通信",
+    "node.listTitle": "光点一覧",
+    "node.listTabs": "光点一覧の表示切替",
+    "node.type": "タイプ",
+    "node.title": "タイトル",
+    "node.titlePlaceholder": "記憶の断片、曲名、映像名",
+    "node.newTitlePlaceholder": "新しい光点のタイトル",
+    "node.body": "本文",
+    "node.bodyPlaceholder": "本文を入力してください",
+    "node.addButton": "光点を追加",
+    "node.delete": "光点を削除",
+    "node.noBody": "本文なし",
+    "node.emptyOwn": "光点はまだありません",
+    "node.emptyFollowing": "フォロー中クラスタの光点はまだありません",
+    "node.emptyFavorites": "お気に入りの光点はまだありません",
+    "node.open": "光点を開く",
+    "node.createdAt": "登録日時 {date}",
+    "node.connectionCount": "接続 {count}",
+    "node.tempLimit": "一時領域に保管できる光点は{limit}つまでです。",
+    "node.restoreFromTemporary": "{title}を一時領域から取り出す",
+    "node.deleteConfirm": "この光点を削除しますか？",
+    "node.sourceNodes": "ソースノード",
+    "node.targetNodes": "ターゲットノード",
+    "cluster.type": "クラスタ",
+    "cluster.listTitle": "クラスタ一覧",
+    "cluster.listTabs": "クラスタ一覧の表示切替",
+    "cluster.newCluster": "新しいクラスタ",
+    "cluster.name": "クラスタ名",
+    "cluster.description": "説明",
+    "cluster.descriptionPlaceholder": "説明を入力してください",
+    "cluster.addCluster": "クラスタを追加",
+    "cluster.noDescription": "説明なし",
+    "cluster.noClusters": "クラスタはまだありません",
+    "cluster.follow": "フォロー",
+    "cluster.followTitle": "クラスタをフォロー",
+    "cluster.followers": "フォロワー {count}",
+    "cluster.delete": "クラスタを削除",
+    "cluster.deleteConfirm": "このクラスタを削除しますか？\nクラスタ内の光点は削除せず、Publicクラスタへ移動します。",
+    "cluster.deleteError": "クラスタを削除できませんでした。時間をおいてもう一度お試しください。",
+    "cluster.moveError": "光点のクラスタを移動できませんでした。時間をおいてもう一度お試しください。",
+    "cluster.move": "移動",
+    "cluster.moveTo": "移動先",
+    "cluster.noMoveTarget": "移動先なし",
+    "cluster.cannotMove": "移動不可",
+    "cluster.otherUserNode": "他ユーザーの光点",
+    "cluster.nodes": "クラスタ",
+    "home.button": "ホーム",
+    "home.moveTitle": "ホームへ移動",
+    "home.notSetTitle": "ホームがまだ設定されていません",
+    "home.saveButton": "この場所をホームにする",
+    "home.saveTitle": "この場所をホームにする",
+    "home.saving": "保存中",
+    "home.saved": "保存しました",
+    "home.saveError": "ホームを保存できませんでした",
+    "universe.aria": "情報の星図",
+    "universe.context": "文脈",
+    "universe.explore": "探索",
+    "universe.switchToContext": "文脈モードに切り替え",
+    "universe.switchToExplore": "探索モードに切り替え",
+    "universe.coordinate": "座標 {x}, {y}",
+    "temporary.aria": "一時領域",
+    "temporary.title": "一時領域",
+    "temporary.restore": "元に戻す",
+    "search.title": "検索",
+    "search.show": "検索を表示",
+    "search.hide": "検索を隠す",
+    "search.kind": "種別",
+    "search.word": "ワード",
+    "search.wordPlaceholder": "タイトル・本文・ユーザー名・自己紹介・クラスタ名・クラスタ説明",
+    "search.sort": "並べ替え",
+    "search.order": "順序",
+    "search.createdAt": "登録日時",
+    "search.likeCount": "Like数",
+    "search.connectionCount": "接続ノード数",
+    "search.followerCount": "フォロワー数",
+    "search.desc": "降順",
+    "search.asc": "昇順",
+    "search.noResults": "該当する結果はありません",
+    "search.showMore": "さらに20件表示",
+    "media.dropFile": "ファイルをドロップ",
+    "media.dropAny": "ここへファイルをドラッグ＆ドロップできます",
+    "media.dropImage": "PNG/JPG/GIFをここへドラッグ＆ドロップできます",
+    "media.dropMusic": "MP3をここへドラッグ＆ドロップできます",
+    "media.dropVideo": "MP4をここへドラッグ＆ドロップできます",
+    "media.pasteImage": "画像を貼り付け",
+    "media.pasteHint": "ここをクリックして Ctrl+V で貼り付けできます",
+    "media.pasted": "{name} を貼り付けました",
+    "media.dropped": "{name} をドロップしました",
+    "media.unsupported": "このタイプでは使えないファイルです",
+    "media.duration": "再生時間",
+    "media.seconds": "秒",
+    "media.selectFile": "ファイル選択",
+    "media.noFile": "ファイルが選択されていません",
+    "media.relayImage": "通信画像",
+    "link.previewLoading": "リンクプレビューを取得中",
+    "link.defaultTitle": "リンク",
+    "connection.type": "接続",
+    "connection.connectTitle": "光点を接続",
+    "connection.editTitle": "接続コメントを編集",
+    "connection.commentTitle": "接続コメント",
+    "connection.summary": "{source} から {target} へ接続します",
+    "connection.commentSummary": "{source} から {target} へのコメント",
+    "connection.comment": "コメント",
+    "connection.commentPlaceholder": "接続にコメントを付ける",
+    "connection.connectButton": "線で繋ぐ",
+    "connection.disconnect": "接続を切る",
+    "connection.save": "保存",
+    "connection.cannotEdit": "この接続は作成または編集できません",
+    "connection.cannotCreate": "この接続は作成できません",
+    "connection.kind": "接続",
+    "profile.emptyBio": "自己紹介文は未設定です",
+    "profile.bioHeading": "自己紹介文",
+    "profile.userClusters": "クラスタ一覧",
+    "profile.userNodes": "光点一覧",
+    "profile.deleteUser": "ユーザー削除",
+    "profile.editProfile": "プロフィール編集",
+    "profile.noUserDetail": "ユーザー詳細を表示できませんでした",
+    "profile.blockConfirm": "このユーザーは自分の光点に対して接続線を作ることが出来なくなります。既存の接続線についてもこのユーザーが作成したものは削除されます。よろしいですか？",
+    "profile.blockError": "ブロックできませんでした",
+    "profile.unblockError": "ブロック解除できませんでした",
+    "profile.deleteConfirm": "ユーザーを削除します。この操作は取り消せません。あなたの投稿、クラスタ、接続、ログイン情報も削除されます。よろしいですか？",
+    "profile.deleteError": "ユーザーを削除できませんでした。時間をおいてもう一度お試しください。",
+    "favorite.pinned": "固定お気に入り",
+    "favorite.remove": "お気に入り解除",
+    "favorite.add": "お気に入りに追加",
+    "share.title": "共有",
+    "share.panelTitle": "共有",
+    "share.enabled": "共有可能",
+    "share.disabled": "共有不可",
+    "share.publicLinks": "公開リンクを見る",
+    "share.settings": "共有設定",
+    "share.links": "共有リンク",
+    "share.loading": "共有設定を読み込んでいます",
+    "share.loadError": "共有設定を読み込めませんでした",
+    "share.allow": "この光点を共有可能にする",
+    "share.disableNote": "共有不可にすると、新しい共有リンクは作成できず、既存の共有リンクも閲覧できなくなります。",
+    "share.range": "共有範囲",
+    "share.context": "文脈まで共有",
+    "share.contextHint": "ソース・ターゲットの光点と接続コメントも表示",
+    "share.single": "この光点だけ共有",
+    "share.singleHint": "本文とメディアのみ表示",
+    "share.create": "共有リンクを作成",
+    "share.ownerLinks": "この光点の所有者が公開した共有リンクを表示しています。",
+    "share.nodeOnly": "光点だけ",
+    "share.withContext": "文脈まで",
+    "share.disabledStatus": "無効化済み",
+    "share.enabledStatus": "有効",
+    "share.noLinks": "共有リンクはまだありません",
+    "share.noPublicLinks": "公開中の共有リンクはまだありません",
+    "share.urlLabel": "共有URL",
+    "share.disable": "無効化",
+    "share.saveError": "共有設定を保存できませんでした。時間をおいてもう一度お試しください。",
+    "share.createError": "共有リンクを作成できませんでした。共有可能になっているか確認してください。",
+    "share.disableConfirm": "この共有リンクを無効化しますか？",
+    "share.disableError": "共有リンクを無効化できませんでした。時間をおいてもう一度お試しください。",
+    "relay.start": "通信開始",
+    "relay.viewLog": "通信ログ閲覧",
+    "relay.closed": "通信は終了しています",
+    "relay.active": "通信中",
+    "relay.private": "通信相手にのみ公開",
+    "relay.selectable": "通信先を選択できます",
+    "relay.ownerStarts": "持ち主が通信を開始すると有効になります",
+    "relay.recipients": "通信先",
+    "relay.peopleCount": "{count}人",
+    "relay.noLikedUsers": "この光点にLikeしているユーザーはまだいません",
+    "relay.confirmRecipients": "決定",
+    "relay.readonly": "通信ログは読み取り専用です",
+    "relay.messagePlaceholder": "メッセージを入力",
+    "relay.send": "送信",
+    "relay.loading": "通信を読み込んでいます",
+    "relay.self": "自分",
+    "relay.chat": "チャット",
+    "relay.noMessages": "メッセージはまだありません",
+    "relay.selectThenStart": "通信先を選択して決定すると通信が始まります",
+    "relay.others": "通信相手",
+    "relay.undecided": "未決定",
+    "relay.close": "通信終了",
+    "relay.openError": "通信を開けませんでした",
+    "relay.reactionError": "リアクションを送信できませんでした",
+    "relay.selectError": "通信先を選択してください",
+    "relay.startError": "通信を開始できませんでした",
+    "relay.messageError": "メッセージを送信できませんでした",
+    "relay.closeConfirm": "この光点での通信を終了しますか？",
+    "relay.closeError": "通信を終了できませんでした",
+    "notification.trigger": "通知",
+    "notification.listTitle": "通知一覧",
+    "notification.markAllRead": "すべて既読",
+    "notification.empty": "通知はまだありません",
+    "notification.more": "次の20件を表示",
+    "notification.someone": "誰か",
+    "notification.yourNode": "あなたの光点",
+    "notification.relatedNode": "別の光点",
+    "notification.yourCluster": "あなたのクラスタ",
+    "notification.relayInvite": "{actor}さんから通信に招待されました",
+    "notification.linkCreated": "{actor}さんが「{related}」から「{node}」へ接続しました",
+    "notification.like": "{actor}さんが「{node}」にLikeしました",
+    "notification.favorite": "{actor}さんが「{node}」をお気に入りに追加しました",
+    "notification.clusterFollow": "{actor}さんがクラスタ「{cluster}」をフォローしました",
+    "notification.generic": "新しい通知があります",
+    "notification.openNode": "光点を開く",
+    "notification.openCluster": "クラスタを開く",
+    "processing.addingNode": "光点を追加しています",
+    "processing.uploadSave": "アップロードと保存を処理中です。画面を閉じずにお待ちください。",
+    "processing.saveNode": "光点を保存しています。",
+    "processing.uploadConnect": "ファイルのアップロードと接続を処理中です。画面を閉じずにお待ちください。",
+    "processing.saveConnect": "光点の保存と接続を処理中です。",
+    "auth.brandStatement": "新たにつなげよう、点を線に。",
+    "auth.loginTitle": "ログイン",
+    "auth.loginIdLabel": "メールアドレス / ユーザーID",
+    "auth.passwordLabel": "パスワード",
+    "auth.loginButton": "ログイン",
+    "auth.signupTitle": "ユーザー作成",
+    "auth.emailLabel": "メールアドレス",
+    "auth.userNameLabel": "ユーザー名",
+    "auth.userNamePlaceholder": "表示名",
+    "auth.userIdLabel": "ユーザーID",
+    "auth.userIdPlaceholder": "半角英数、_、-",
+    "auth.userIdHint": "半角英数字、_、- のみ。1〜25文字。ログインにも使います。",
+    "auth.passwordHint": "8〜25文字。半角英大文字・小文字・数字・記号（_ - ! # $ % ( ) [ ] @ + * ? /）のうち3種類以上を含めてください。",
+    "auth.passwordHintShort": "8〜25文字。半角英大文字・小文字・数字・記号（_ - ! # $ % ( ) [ ] @ + * ? /）のうち3種類以上。",
+    "auth.birthDateLabel": "生年月日",
+    "auth.birthDateHint": "この情報は公開されません",
+    "auth.profileIconLabel": "プロフィールアイコン",
+    "auth.bioLabel": "自己紹介文",
+    "auth.bioPlaceholder": "自己紹介文",
+    "auth.signupButton": "ユーザーを作成",
+    "auth.errorLogin": "ログインできませんでした。メールアドレス、パスワード、ログイン許可を確認してください。",
+    "auth.errorSignup": "ユーザーを作成できませんでした。ユーザーID、メール、パスワード条件を確認してください。",
+    "profile.type": "ユーザー",
+    "profile.title": "プロフィール編集",
+    "profile.passwordPlaceholder": "変更する場合のみ入力",
+    "profile.passwordHint":
+      "空欄なら変更しません。変更する場合は8〜25文字で、半角英大文字・小文字・数字・記号（_ - ! # $ % ( ) [ ] @ + * ? /）のうち3種類以上を含めてください。",
+    "profile.passwordHintShort": "空欄なら変更しません。変更する場合は8〜25文字で、半角英大文字・小文字・数字・記号（_ - ! # $ % ( ) [ ] @ + * ? /）のうち3種類以上。",
+    "profile.errorSave": "プロフィールを保存できませんでした。ユーザーIDやパスワード条件を確認してください。",
+    "upload.limit": "ファイルサイズは{mb}MB以下にしてください",
+  },
+};
 
 const labels = {
-  text: "\u30c6\u30ad\u30b9\u30c8",
-  relay: "中継通信",
-  image: "\u753b\u50cf",
-  music: "\u97f3\u697d",
-  video: "\u6620\u50cf",
-  open: "\u3092\u958b\u304f",
-  startChar: "\u958b\u59cb\u6587\u5b57",
-  endChar: "\u7d42\u4e86\u6587\u5b57",
-  startSecond: "\u958b\u59cb\u79d2",
-  endSecond: "\u7d42\u4e86\u79d2",
-  saveSelection: "\u7bc4\u56f2\u3092\u4fdd\u5b58",
+  text: "Text",
+  relay: "Relay",
+  image: "Image",
+  music: "Music",
+  video: "Video",
+  open: "Open",
+  startChar: "Start character",
+  endChar: "End character",
+  startSecond: "Start second",
+  endSecond: "End second",
+  saveSelection: "Save selection",
 };
 
 const typeMeta = {
@@ -167,6 +723,10 @@ const typeMeta = {
   music: { label: labels.music, glyph: "M", color: "#7effb2" },
   video: { label: labels.video, glyph: "V", color: "#ff5ea8" },
 };
+
+function getTypeLabel(type) {
+  return t(`type.${type}`);
+}
 
 const NODE_LIST_PAGE_SIZE = 20;
 const SEARCH_RESULT_PAGE_SIZE = 20;
@@ -242,9 +802,124 @@ function createClientId() {
   return `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function isSupportedLocale(locale) {
+  return SUPPORTED_LOCALES.includes(locale);
+}
+
+function isProbablyJapaneseUser() {
+  const languages = Array.isArray(navigator.languages) && navigator.languages.length ? navigator.languages : [navigator.language];
+  if (languages.some((language) => String(language || "").toLowerCase().startsWith("ja"))) {
+    return true;
+  }
+
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone === "Asia/Tokyo";
+  } catch (error) {
+    return false;
+  }
+}
+
+function getInitialLocale() {
+  const storedLocale = localStorage.getItem(LOCALE_STORAGE_KEY);
+  if (isSupportedLocale(storedLocale)) {
+    return storedLocale;
+  }
+  return isProbablyJapaneseUser() ? "ja" : "en";
+}
+
+function t(key, variables = {}) {
+  const template = i18n[currentLocale]?.[key] ?? i18n.en[key] ?? key;
+  return template.replace(/\{(\w+)\}/g, (match, name) => (variables[name] ?? match));
+}
+
+function setLocalizedMessage(element, key, variables = {}) {
+  if (!element) return;
+  if (!key) {
+    element.textContent = "";
+    delete element.dataset.i18nMessageKey;
+    delete element.dataset.i18nMessageVars;
+    return;
+  }
+  element.dataset.i18nMessageKey = key;
+  element.dataset.i18nMessageVars = JSON.stringify(variables);
+  element.textContent = t(key, variables);
+}
+
+function refreshLocalizedMessages() {
+  [authMessage, profileMessage].forEach((element) => {
+    const key = element?.dataset.i18nMessageKey;
+    if (!key) return;
+    let variables = {};
+    try {
+      variables = JSON.parse(element.dataset.i18nMessageVars || "{}");
+    } catch (error) {
+      variables = {};
+    }
+    element.textContent = t(key, variables);
+  });
+}
+
+function applyLocale() {
+  document.documentElement.lang = currentLocale;
+  document.querySelectorAll("[data-i18n]").forEach((element) => {
+    element.textContent = t(element.dataset.i18n);
+  });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((element) => {
+    element.setAttribute("placeholder", t(element.dataset.i18nPlaceholder));
+  });
+  document.querySelectorAll("[data-i18n-title]").forEach((element) => {
+    element.setAttribute("title", t(element.dataset.i18nTitle));
+  });
+  document.querySelectorAll("[data-i18n-aria-label]").forEach((element) => {
+    element.setAttribute("aria-label", t(element.dataset.i18nAriaLabel));
+  });
+  document.querySelectorAll(".locale-switch").forEach((element) => {
+    element.setAttribute("aria-label", t("locale.label"));
+  });
+  document.querySelectorAll("[data-locale-choice]").forEach((button) => {
+    const isActive = button.dataset.localeChoice === currentLocale;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
+  refreshLocalizedMessages();
+}
+
+function refreshLocaleSensitiveViews() {
+  if (typeof updateHomeControls === "function") updateHomeControls();
+  if (typeof updateUniverseModeButton === "function") updateUniverseModeButton();
+  if (typeof updateTypeFields === "function") updateTypeFields();
+  if (typeof renderNodeList === "function") renderNodeList();
+  if (typeof renderClusterList === "function") renderClusterList();
+  if (typeof renderSearchResults === "function") renderSearchResults();
+  if (typeof renderNotifications === "function") renderNotifications();
+  if (typeof renderTemporaryNodeBin === "function") renderTemporaryNodeBin();
+  if (typeof updateConnectionActionsLayout === "function") updateConnectionActionsLayout();
+  if (detailDialog?.open && activeDetailNodeId && typeof openDetail === "function") {
+    openDetail(activeDetailNodeId);
+  }
+  if (userDetailDialog?.open && activeUserDetailId && typeof openUserDetail === "function") {
+    openUserDetail(activeUserDetailId);
+  }
+  if (shareDialog?.open && activeDetailNodeId && typeof openShareDialog === "function") {
+    openShareDialog();
+  }
+  if (relayDialog?.open && activeRelayData && typeof renderRelayDialogContent === "function") {
+    renderRelayDialogContent(activeRelayData);
+  }
+}
+
+function setLocale(locale) {
+  if (!isSupportedLocale(locale) || locale === currentLocale) return;
+  currentLocale = locale;
+  localStorage.setItem(LOCALE_STORAGE_KEY, currentLocale);
+  applyLocale();
+  refreshLocaleSensitiveViews();
+}
+
 let apiAvailable = false;
 let selectedNodeId = null;
 let activeDetailNodeId = null;
+let activeUserDetailId = null;
 let activeSelectionSyncCleanup = null;
 let activeNodeDrag = null;
 let activeTemporaryNodeDrag = null;
@@ -280,6 +955,7 @@ let pastedRelayImage = { file: null, previewUrl: "" };
 let nodePositionRefreshTimer = null;
 let nodePositionAnimationFrame = null;
 let authToken = localStorage.getItem("textosphereToken") || "";
+let currentLocale = getInitialLocale();
 let currentUser = null;
 let clusters = [
   {
@@ -375,7 +1051,7 @@ function isFileWithinUploadLimit(file, type = "") {
 }
 
 function getUploadLimitMessage(type = "") {
-  return `ファイルサイズは${getUploadLimitForType(type).mb}MB以下にしてください`;
+  return t("upload.limit", { mb: getUploadLimitForType(type).mb });
 }
 
 function isTextNodeType(type) {
@@ -393,7 +1069,7 @@ function clearPastedImage(state, previewElement, statusElement, clearButtonEleme
     previewElement.hidden = true;
   }
   if (statusElement) {
-    statusElement.textContent = "ここをクリックして Ctrl+V で貼り付けできます";
+    statusElement.textContent = t("media.pasteHint");
   }
   if (clearButtonElement) {
     clearButtonElement.hidden = true;
@@ -415,7 +1091,7 @@ function setPastedImage(state, file, previewElement, statusElement, clearButtonE
     previewElement.hidden = false;
   }
   if (statusElement) {
-    statusElement.textContent = `${file.name} を貼り付けました`;
+    statusElement.textContent = t("media.pasted", { name: file.name });
   }
   if (clearButtonElement) {
     clearButtonElement.hidden = false;
@@ -450,10 +1126,10 @@ function updateImagePastePanel(type, panelElement, state, previewElement, status
 }
 
 function getMediaDropMessage(type) {
-  if (type === "image") return "PNG/JPG/GIFをここへドラッグ＆ドロップできます";
-  if (type === "music") return "MP3をここへドラッグ＆ドロップできます";
-  if (type === "video") return "MP4をここへドラッグ＆ドロップできます";
-  return "ここへファイルをドラッグ＆ドロップできます";
+  if (type === "image") return t("media.dropImage");
+  if (type === "music") return t("media.dropMusic");
+  if (type === "video") return t("media.dropVideo");
+  return t("media.dropAny");
 }
 
 function getMediaFileExtension(file) {
@@ -493,7 +1169,7 @@ function setDroppedMedia(state, file, statusElement, clearButtonElement, dropZon
     fileInputElement.value = "";
   }
   if (statusElement) {
-    statusElement.textContent = `${file.name} をドロップしました`;
+    statusElement.textContent = t("media.dropped", { name: file.name });
   }
   if (clearButtonElement) {
     clearButtonElement.hidden = false;
@@ -522,7 +1198,7 @@ function handleMediaFileDrop(
   if (!isMediaFileAcceptedForType(type, file)) {
     clearDroppedMedia(state, statusElement, clearButtonElement, dropZoneElement, type);
     dropZoneElement.classList.add("is-invalid");
-    statusElement.textContent = "このタイプでは使えないファイルです";
+    statusElement.textContent = t("media.unsupported");
     return false;
   }
 
@@ -744,7 +1420,7 @@ function renderLinkPreviewCard(value) {
       <span class="link-preview-image" aria-hidden="true"></span>
       <span class="link-preview-main">
         <span class="link-preview-site">${escapeHtml(new URL(url).hostname.replace(/^www\./, ""))}</span>
-        <span class="link-preview-title">リンクプレビューを取得中</span>
+        <span class="link-preview-title">${escapeHtml(t("link.previewLoading"))}</span>
         <span class="link-preview-description">${escapeHtml(url)}</span>
       </span>
     </a>
@@ -754,7 +1430,7 @@ function renderLinkPreviewCard(value) {
 function renderLinkPreviewContent(preview) {
   const imageUrl = getSafeResourceUrl(preview.image, { allowRelative: false, allowBlob: false });
   const finalUrl = getSafeResourceUrl(preview.finalUrl || preview.url, { allowRelative: false, allowBlob: false });
-  const title = String(preview.title || finalUrl || "リンク").trim();
+  const title = String(preview.title || finalUrl || t("link.defaultTitle")).trim();
   const description = String(preview.description || "").trim();
   const siteName = String(preview.siteName || (finalUrl ? new URL(finalUrl).hostname.replace(/^www\./, "") : "")).trim();
   return `
@@ -886,6 +1562,22 @@ async function apiRequest(path, options = {}) {
 
 function setAuthMessage(message) {
   authMessage.textContent = message || "";
+  delete authMessage.dataset.i18nMessageKey;
+  delete authMessage.dataset.i18nMessageVars;
+}
+
+function setAuthMessageKey(key, variables = {}) {
+  setLocalizedMessage(authMessage, key, variables);
+}
+
+function setProfileMessage(message) {
+  profileMessage.textContent = message || "";
+  delete profileMessage.dataset.i18nMessageKey;
+  delete profileMessage.dataset.i18nMessageVars;
+}
+
+function setProfileMessageKey(key, variables = {}) {
+  setLocalizedMessage(profileMessage, key, variables);
 }
 
 function clearInitialAuthFields() {
@@ -901,7 +1593,7 @@ function setAuthenticatedView(user) {
   startNotificationRefresh();
   startNodePositionRefresh();
   currentUserId.textContent = getUserName(user);
-  currentUserBio.textContent = user.bio || "自己紹介文は未設定です";
+  currentUserBio.textContent = user.bio || t("profile.emptyBio");
   currentUserIcon.replaceChildren();
   const profileIconUrl = resolveMediaUrl(user.profileIcon);
   if (profileIconUrl) {
@@ -1014,7 +1706,7 @@ async function login() {
       }),
     );
   } catch (error) {
-    setAuthMessage("ログインできませんでした。メールアドレス、パスワード、ログイン許可を確認してください。");
+    setAuthMessageKey("auth.errorLogin");
   }
 }
 
@@ -1029,7 +1721,7 @@ async function signup() {
     formData.append("bio", signupBioInput.value);
     if (signupProfileIconInput.files && signupProfileIconInput.files[0]) {
       if (!isFileWithinUploadLimit(signupProfileIconInput.files[0])) {
-        setAuthMessage(getUploadLimitMessage());
+        setAuthMessageKey("upload.limit", { mb: getUploadLimitForType().mb });
         return;
       }
       formData.append("profileIconFile", signupProfileIconInput.files[0]);
@@ -1042,7 +1734,7 @@ async function signup() {
       }),
     );
   } catch (error) {
-    setAuthMessage("ユーザーを作成できませんでした。ユーザーID、メール、パスワード条件を確認してください。");
+    setAuthMessageKey("auth.errorSignup");
   }
 }
 
@@ -1054,7 +1746,7 @@ function openProfileDialog() {
   profileBirthDateInput.value = toDateInputValue(currentUser.birthDate);
   profileIconInput.value = "";
   profileBioInput.value = currentUser.bio || "";
-  profileMessage.textContent = "";
+  setProfileMessage("");
   if (!profileDialog.open) {
     profileDialog.showModal();
   }
@@ -1112,7 +1804,7 @@ async function saveProfile() {
   formData.append("bio", profileBioInput.value);
   if (profileIconInput.files && profileIconInput.files[0]) {
     if (!isFileWithinUploadLimit(profileIconInput.files[0])) {
-      profileMessage.textContent = getUploadLimitMessage();
+      setProfileMessageKey("upload.limit", { mb: getUploadLimitForType().mb });
       return;
     }
     formData.append("profileIconFile", profileIconInput.files[0]);
@@ -1120,7 +1812,7 @@ async function saveProfile() {
 
   try {
     saveProfileButton.disabled = true;
-    profileMessage.textContent = "";
+    setProfileMessage("");
     const response = await apiRequest("/auth/me", {
       method: "PATCH",
       body: formData,
@@ -1128,7 +1820,7 @@ async function saveProfile() {
     setAuthenticatedView(response.user);
     closeProfileDialog();
   } catch (error) {
-    profileMessage.textContent = "プロフィールを保存できませんでした。ユーザーIDやパスワード条件を確認してください。";
+    setProfileMessageKey("profile.errorSave");
   } finally {
     saveProfileButton.disabled = false;
   }
@@ -1402,35 +2094,35 @@ function stopStateRefresh() {
 
 function getNotificationMessage(notification) {
   if (notification.type === "relay_invite") {
-    const actorName = notification.actorUser ? getUserName(notification.actorUser) : "誰か";
-    return `${actorName}さんから通信に招待されました`;
+    const actorName = notification.actorUser ? getUserName(notification.actorUser) : t("notification.someone");
+    return t("notification.relayInvite", { actor: actorName });
   }
-  const actorName = notification.actorUser ? getUserName(notification.actorUser) : "誰か";
+  const actorName = notification.actorUser ? getUserName(notification.actorUser) : t("notification.someone");
   if (notification.type === "node_link") {
-    const nodeTitle = notification.node?.title || "あなたの光点";
-    const relatedTitle = notification.relatedNode?.title || "別の光点";
-    return `${actorName}さんが「${relatedTitle}」から「${nodeTitle}」へ接続しました`;
+    const nodeTitle = notification.node?.title || t("notification.yourNode");
+    const relatedTitle = notification.relatedNode?.title || t("notification.relatedNode");
+    return t("notification.linkCreated", { actor: actorName, related: relatedTitle, node: nodeTitle });
   }
   if (notification.type === "node_like") {
-    return `${actorName}さんが「${notification.node?.title || "あなたの光点"}」にLikeしました`;
+    return t("notification.like", { actor: actorName, node: notification.node?.title || t("notification.yourNode") });
   }
   if (notification.type === "node_favorite") {
-    return `${actorName}さんが「${notification.node?.title || "あなたの光点"}」をお気に入りに追加しました`;
+    return t("notification.favorite", { actor: actorName, node: notification.node?.title || t("notification.yourNode") });
   }
   if (notification.type === "cluster_follow") {
-    return `${actorName}さんがクラスタ「${notification.cluster?.name || "あなたのクラスタ"}」をフォローしました`;
+    return t("notification.clusterFollow", { actor: actorName, cluster: notification.cluster?.name || t("notification.yourCluster") });
   }
-  return "新しい通知があります";
+  return t("notification.generic");
 }
 
 function getNotificationTargetLabel(notification) {
-  if (notification.node?.id) return "光点を開く";
-  if (notification.cluster?.id) return "クラスタを開く";
+  if (notification.node?.id) return t("notification.openNode");
+  if (notification.cluster?.id) return t("notification.openCluster");
   return "";
 }
 
 function renderNotificationActor(notification) {
-  const actorName = notification.actorUser ? getUserName(notification.actorUser) : "誰か";
+  const actorName = notification.actorUser ? getUserName(notification.actorUser) : t("notification.someone");
   if (!notification.actorUser?.id) {
     return `<span class="notification-actor-text">${escapeHtml(actorName)}</span>`;
   }
@@ -1439,24 +2131,25 @@ function renderNotificationActor(notification) {
 
 function renderNotificationMessage(notification) {
   const actor = renderNotificationActor(notification);
+  const tail = (key, variables = {}) => escapeHtml(t(key, { actor: "", ...variables }).trimStart());
   if (notification.type === "relay_invite") {
-    return `${actor}<span>さんから通信に招待されました</span>`;
+    return `${actor}<span>${tail("notification.relayInvite")}</span>`;
   }
   if (notification.type === "node_link") {
-    const nodeTitle = notification.node?.title || "あなたの光点";
-    const relatedTitle = notification.relatedNode?.title || "別の光点";
-    return `${actor}<span>さんが「${escapeHtml(relatedTitle)}」から「${escapeHtml(nodeTitle)}」へ接続しました</span>`;
+    const nodeTitle = notification.node?.title || t("notification.yourNode");
+    const relatedTitle = notification.relatedNode?.title || t("notification.relatedNode");
+    return `${actor}<span>${tail("notification.linkCreated", { related: relatedTitle, node: nodeTitle })}</span>`;
   }
   if (notification.type === "node_like") {
-    return `${actor}<span>さんが「${escapeHtml(notification.node?.title || "あなたの光点")}」にLikeしました</span>`;
+    return `${actor}<span>${tail("notification.like", { node: notification.node?.title || t("notification.yourNode") })}</span>`;
   }
   if (notification.type === "node_favorite") {
-    return `${actor}<span>さんが「${escapeHtml(notification.node?.title || "あなたの光点")}」をお気に入りに追加しました</span>`;
+    return `${actor}<span>${tail("notification.favorite", { node: notification.node?.title || t("notification.yourNode") })}</span>`;
   }
   if (notification.type === "cluster_follow") {
-    return `${actor}<span>さんがクラスタ「${escapeHtml(notification.cluster?.name || "あなたのクラスタ")}」をフォローしました</span>`;
+    return `${actor}<span>${tail("notification.clusterFollow", { cluster: notification.cluster?.name || t("notification.yourCluster") })}</span>`;
   }
-  return `<span>新しい通知があります</span>`;
+  return `<span>${escapeHtml(t("notification.generic"))}</span>`;
 }
 
 function renderNotifications() {
@@ -1465,7 +2158,7 @@ function renderNotifications() {
   notificationTriggerButton.classList.toggle("has-unread", unreadNotificationCount > 0);
   markNotificationsReadButton.disabled = unreadNotificationCount === 0 || notifications.length === 0;
   if (notifications.length === 0) {
-    notificationList.innerHTML = `<p class="notification-empty">通知はまだありません</p>`;
+    notificationList.innerHTML = `<p class="notification-empty">${escapeHtml(t("notification.empty"))}</p>`;
     return;
   }
 
@@ -1485,7 +2178,7 @@ function renderNotifications() {
     })
     .join("");
   const moreMarkup = hasMoreNotifications
-    ? `<button class="notification-more" type="button" aria-label="次の20件を表示">▽</button>`
+    ? `<button class="notification-more" type="button" aria-label="${escapeHtml(t("notification.more"))}">▽</button>`
     : "";
   notificationList.innerHTML = `${itemsMarkup}${moreMarkup}`;
 
@@ -1658,8 +2351,14 @@ function setUniverseViewCenter(x, y, zoom = universeZoom) {
 function updateHomeControls() {
   if (!homeButton || !saveHomeButton) return;
   homeButton.disabled = !currentHomeLocation;
-  homeButton.title = currentHomeLocation ? "ホームへ移動" : "ホームがまだ設定されていません";
+  homeButton.title = currentHomeLocation ? t("home.moveTitle") : t("home.notSetTitle");
   homeButton.setAttribute("aria-label", homeButton.title);
+  homeButton.textContent = t("home.button");
+  if (!saveHomeButton.disabled) {
+    saveHomeButton.textContent = t("home.saveButton");
+  }
+  saveHomeButton.title = t("home.saveTitle");
+  saveHomeButton.setAttribute("aria-label", t("home.saveTitle"));
 }
 
 function getCurrentUniverseLocation() {
@@ -1688,7 +2387,7 @@ async function saveCurrentHomeLocation() {
   if (!currentUser || !apiAvailable) return;
   const previousLabel = saveHomeButton.textContent;
   saveHomeButton.disabled = true;
-  saveHomeButton.textContent = "保存中";
+  saveHomeButton.textContent = t("home.saving");
 
   try {
     const result = await apiRequest("/space-home", {
@@ -1697,7 +2396,7 @@ async function saveCurrentHomeLocation() {
     });
     currentHomeLocation = normalizeHomeLocation(result);
     updateHomeControls();
-    saveHomeButton.textContent = "保存しました";
+    saveHomeButton.textContent = t("home.saved");
     setTimeout(() => {
       saveHomeButton.textContent = previousLabel;
       saveHomeButton.disabled = false;
@@ -1705,7 +2404,7 @@ async function saveCurrentHomeLocation() {
   } catch (error) {
     saveHomeButton.textContent = previousLabel;
     saveHomeButton.disabled = false;
-    window.alert("ホームを保存できませんでした");
+    window.alert(t("home.saveError"));
   }
 }
 
@@ -2086,7 +2785,7 @@ function drawUniverseCenterGuide() {
   ctx.font = "11px Inter, ui-sans-serif, system-ui";
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
-  ctx.fillText(`座標 ${centerCoord.x.toFixed(1)}, ${centerCoord.y.toFixed(1)}`, center.x + arm + 8, center.y + arm * 0.55);
+  ctx.fillText(t("universe.coordinate", { x: centerCoord.x.toFixed(1), y: centerCoord.y.toFixed(1) }), center.x + arm + 8, center.y + arm * 0.55);
   ctx.restore();
 }
 
@@ -2490,20 +3189,20 @@ function renderTemporaryNodeBin() {
   temporaryNodeBin.classList.toggle("has-items", items.length > 0);
   temporaryNodeList.innerHTML = items.length
     ? ""
-    : `<p class="temporary-node-empty">空</p>`;
+    : `<p class="temporary-node-empty">${escapeHtml(t("common.empty"))}</p>`;
 
   items.forEach((node) => {
     const item = document.createElement("div");
     item.className = "temporary-node-item";
     item.tabIndex = 0;
     item.setAttribute("role", "button");
-    item.setAttribute("aria-label", `${node.title}を一時領域から取り出す`);
+    item.setAttribute("aria-label", t("node.restoreFromTemporary", { title: node.title }));
     item.dataset.nodeId = node.id;
     item.style.setProperty("--node-color", typeMeta[node.type].color);
     item.innerHTML = `
       <span class="temporary-node-dot" aria-hidden="true">${typeMeta[node.type].glyph}</span>
       <span class="temporary-node-title">${escapeHtml(node.title)}</span>
-      <button class="temporary-node-restore" type="button">元に戻す</button>
+      <button class="temporary-node-restore" type="button">${escapeHtml(t("temporary.restore"))}</button>
     `;
     item.addEventListener("click", () => {
       selectedNodeId = node.id;
@@ -2535,7 +3234,7 @@ function renderTemporaryNodeBin() {
 function addNodeToTemporaryBin(id) {
   if (!id) return false;
   if (!temporaryNodeIds.has(id) && temporaryNodeIds.size >= TEMPORARY_NODE_LIMIT) {
-    window.alert(`一時領域に保管できる光点は${TEMPORARY_NODE_LIMIT}つまでです。`);
+    window.alert(t("node.tempLimit", { limit: TEMPORARY_NODE_LIMIT }));
     return false;
   }
   temporaryNodeIds.add(id);
@@ -2842,16 +3541,16 @@ function openConnectionDialog(sourceNode, targetNode) {
     target: targetNode.id,
   };
   pendingConnectionDelete = null;
-  connectionType.textContent = "接続";
-  connectionTitle.textContent = "光点を接続";
-  connectionSummary.textContent = `${sourceNode.title} から ${targetNode.title} へ接続します`;
+  connectionType.textContent = t("connection.type");
+  connectionTitle.textContent = t("connection.connectTitle");
+  connectionSummary.textContent = t("connection.summary", { source: sourceNode.title, target: targetNode.title });
   connectionCommentInput.value = "";
   connectionCommentInput.readOnly = false;
-  confirmConnectionButton.textContent = "線で繋ぐ";
+  confirmConnectionButton.textContent = t("connection.connectButton");
   confirmConnectionButton.hidden = false;
   disconnectConnectionButton.hidden = true;
   updateConnectionActionsLayout();
-  cancelConnectionButton.textContent = "キャンセル";
+  cancelConnectionButton.textContent = t("common.cancel");
   if (!connectionDialog.open) {
     connectionDialog.showModal();
   }
@@ -2884,20 +3583,20 @@ function openConnectionCommentEditor(hitbox) {
       }
     : null;
   connectionType.innerHTML = `
-    <span class="detail-kind">接続</span>
+    <span class="detail-kind">${escapeHtml(t("connection.kind"))}</span>
     <span class="detail-cluster-meta">${renderOwnerLink(ownerUser)}</span>
     ${createdAtMarkup}
   `;
   bindOwnerDetailLinks(connectionType);
-  connectionTitle.textContent = canEdit ? "接続コメントを編集" : "接続コメント";
-  connectionSummary.textContent = `${sourceNode.title} から ${targetNode.title} へのコメント`;
+  connectionTitle.textContent = canEdit ? t("connection.editTitle") : t("connection.commentTitle");
+  connectionSummary.textContent = t("connection.commentSummary", { source: sourceNode.title, target: targetNode.title });
   connectionCommentInput.value = hitbox.comment;
   connectionCommentInput.readOnly = !canEdit;
-  confirmConnectionButton.textContent = "保存";
+  confirmConnectionButton.textContent = t("connection.save");
   confirmConnectionButton.hidden = !canEdit;
   disconnectConnectionButton.hidden = !canDelete;
   updateConnectionActionsLayout();
-  cancelConnectionButton.textContent = canEdit ? "キャンセル" : "閉じる";
+  cancelConnectionButton.textContent = canEdit ? t("common.cancel") : t("common.close");
   hideLinkCommentTooltip();
   if (!connectionDialog.open) {
     connectionDialog.showModal();
@@ -2910,12 +3609,12 @@ function openConnectionCommentEditor(hitbox) {
 function closeConnectionDialog() {
   pendingConnection = null;
   pendingConnectionDelete = null;
-  connectionType.textContent = "接続";
+  connectionType.textContent = t("connection.type");
   connectionCommentInput.readOnly = false;
   confirmConnectionButton.hidden = false;
   disconnectConnectionButton.hidden = true;
   updateConnectionActionsLayout();
-  cancelConnectionButton.textContent = "キャンセル";
+  cancelConnectionButton.textContent = t("common.cancel");
   connectionDialog.close();
 }
 
@@ -3030,11 +3729,11 @@ function renderNodeList() {
   if (visibleNodes.length === 0) {
     const emptyMessage =
       activeNodeListMode === "followed"
-        ? "フォロー中クラスタの光点はまだありません"
+        ? t("node.emptyFollowing")
         : activeNodeListMode === "favorites"
-          ? "お気に入りの光点はまだありません"
-          : "光点はまだありません";
-    nodeList.innerHTML = `<p class="node-list-empty">${emptyMessage}</p>`;
+          ? t("node.emptyFavorites")
+          : t("node.emptyOwn");
+    nodeList.innerHTML = `<p class="node-list-empty">${escapeHtml(emptyMessage)}</p>`;
     return;
   }
 
@@ -3050,7 +3749,7 @@ function renderNodeList() {
       <span class="node-list-main">
         <span class="node-list-title">${escapeHtml(node.title)}</span>
         <span class="node-list-preview">${escapeHtml(truncateText(node.body, 42))}</span>
-        <span class="node-list-meta">${typeMeta[node.type].label} / ${escapeHtml(formatDateTime(node.createdAt) || "-")} / Like ${Number(node.likeCount || 0)} / 接続 ${getNodeRelationCount(node.id)}</span>
+        <span class="node-list-meta">${escapeHtml(getTypeLabel(node.type))} / ${escapeHtml(formatDateTime(node.createdAt) || "-")} / Like ${Number(node.likeCount || 0)} / ${escapeHtml(t("node.connectionCount", { count: getNodeRelationCount(node.id) }))}</span>
       </span>
     `;
     button.addEventListener("click", () => {
@@ -3066,8 +3765,8 @@ function renderNodeList() {
     const showMoreButton = document.createElement("button");
     showMoreButton.className = "node-list-more";
     showMoreButton.type = "button";
-    showMoreButton.title = "さらに20件表示";
-    showMoreButton.setAttribute("aria-label", "さらに20件表示");
+    showMoreButton.title = t("search.showMore");
+    showMoreButton.setAttribute("aria-label", t("search.showMore"));
     showMoreButton.textContent = "▽";
     showMoreButton.addEventListener("click", () => {
       nodeListVisibleCount = Math.min(nodeListVisibleCount + NODE_LIST_PAGE_SIZE, visibleNodes.length);
@@ -3145,17 +3844,17 @@ function getUserSearchValue(user) {
 function getSearchSortOptions(type = searchTypeInput.value) {
   if (type === "cluster") {
     return [
-      { value: "createdAt", label: "登録日時" },
-      { value: "followerCount", label: "フォロワー数" },
+      { value: "createdAt", label: t("search.createdAt") },
+      { value: "followerCount", label: t("search.followerCount") },
     ];
   }
   if (type === "user" || type === "all") {
-    return [{ value: "createdAt", label: "登録日時" }];
+    return [{ value: "createdAt", label: t("search.createdAt") }];
   }
   return [
-    { value: "createdAt", label: "登録日時" },
-    { value: "likeCount", label: "Like数" },
-    { value: "connectionCount", label: "接続ノード数" },
+    { value: "createdAt", label: t("search.createdAt") },
+    { value: "likeCount", label: t("search.likeCount") },
+    { value: "connectionCount", label: t("search.connectionCount") },
   ];
 }
 
@@ -3242,7 +3941,7 @@ function renderSearchNodeResult(node) {
     <span class="search-result-main">
       <span class="search-result-title">${escapeHtml(node.title)}</span>
       <span class="search-result-preview">${escapeHtml(truncateText(node.body, 42))}</span>
-      <span class="search-result-meta">${typeMeta[node.type].label} / ${escapeHtml(formatDateTime(node.createdAt) || "-")} / Like ${Number(node.likeCount || 0)} / 接続 ${getNodeRelationCount(node.id)}</span>
+      <span class="search-result-meta">${escapeHtml(getTypeLabel(node.type))} / ${escapeHtml(formatDateTime(node.createdAt) || "-")} / Like ${Number(node.likeCount || 0)} / ${escapeHtml(t("node.connectionCount", { count: getNodeRelationCount(node.id) }))}</span>
     </span>
   `;
   button.addEventListener("click", () => {
@@ -3265,8 +3964,8 @@ function renderSearchUserResult(user) {
     <span class="node-list-dot search-result-avatar" aria-hidden="true">${icon ? `<img src="${escapeHtml(icon)}" alt="" />` : escapeHtml(getUserName(user).slice(0, 1).toUpperCase())}</span>
     <span class="search-result-main">
       <span class="search-result-title">${escapeHtml(getUserName(user))}</span>
-      <span class="search-result-preview">${escapeHtml(truncateText(user.bio || "自己紹介なし", 42))}</span>
-      <span class="search-result-meta">ユーザー / ${escapeHtml(formatDateTime(user.createdAt) || "-")}</span>
+      <span class="search-result-preview">${escapeHtml(truncateText(user.bio || t("profile.emptyBio"), 42))}</span>
+      <span class="search-result-meta">${escapeHtml(t("profile.type"))} / ${escapeHtml(formatDateTime(user.createdAt) || "-")}</span>
     </span>
   `;
   button.addEventListener("click", () => openUserDetail(user.id));
@@ -3283,8 +3982,8 @@ function renderSearchClusterResult(cluster) {
     <span class="node-list-dot" aria-hidden="true">C</span>
     <span class="search-result-main">
       <span class="search-result-title">${escapeHtml(cluster.name)}</span>
-      <span class="search-result-preview">${escapeHtml(truncateText(cluster.description || "説明なし", 42))}</span>
-      <span class="search-result-meta">クラスタ / フォロワー ${Number(cluster.followerCount || 0)} / ${escapeHtml(formatDateTime(cluster.createdAt) || "-")}</span>
+      <span class="search-result-preview">${escapeHtml(truncateText(cluster.description || t("cluster.noDescription"), 42))}</span>
+      <span class="search-result-meta">${escapeHtml(t("cluster.type"))} / ${escapeHtml(t("cluster.followers", { count: Number(cluster.followerCount || 0) }))} / ${escapeHtml(formatDateTime(cluster.createdAt) || "-")}</span>
     </span>
   `;
   button.addEventListener("click", () => openClusterNodesDialog(cluster.id));
@@ -3299,12 +3998,12 @@ function renderSearchResults() {
   searchResultCount.textContent = String(results.length);
 
   if (!hasSearchWord) {
-    searchResults.innerHTML = `<p class="search-empty">\u691c\u7d22\u30ef\u30fc\u30c9\u3092\u5165\u529b\u3059\u308b\u3068\u7d50\u679c\u304c\u8868\u793a\u3055\u308c\u307e\u3059</p>`;
+    searchResults.innerHTML = `<p class="search-empty">${escapeHtml(t("search.wordPlaceholder"))}</p>`;
     return;
   }
 
   if (results.length === 0) {
-    searchResults.innerHTML = `<p class="search-empty">該当する結果はありません</p>`;
+    searchResults.innerHTML = `<p class="search-empty">${escapeHtml(t("search.noResults"))}</p>`;
     return;
   }
 
@@ -3323,8 +4022,8 @@ function renderSearchResults() {
     const showMoreButton = document.createElement("button");
     showMoreButton.className = "search-result-more";
     showMoreButton.type = "button";
-    showMoreButton.title = "さらに20件表示";
-    showMoreButton.setAttribute("aria-label", "さらに20件表示");
+    showMoreButton.title = t("search.showMore");
+    showMoreButton.setAttribute("aria-label", t("search.showMore"));
     showMoreButton.textContent = "▽";
     showMoreButton.addEventListener("click", () => {
       searchResultVisibleCount = Math.min(searchResultVisibleCount + SEARCH_RESULT_PAGE_SIZE, results.length);
@@ -3343,8 +4042,8 @@ function setSearchSidebarCollapsed(collapsed) {
   appShell.classList.toggle("search-collapsed", collapsed);
   searchSidebar.classList.toggle("is-collapsed", collapsed);
   searchSidebarToggle.textContent = collapsed ? "<<" : ">>";
-  searchSidebarToggle.title = collapsed ? "検索を表示" : "検索を隠す";
-  searchSidebarToggle.setAttribute("aria-label", collapsed ? "検索を表示" : "検索を隠す");
+  searchSidebarToggle.title = collapsed ? t("search.show") : t("search.hide");
+  searchSidebarToggle.setAttribute("aria-label", collapsed ? t("search.show") : t("search.hide"));
   searchSidebarToggle.setAttribute("aria-expanded", String(!collapsed));
   localStorage.setItem("textosphereSearchCollapsed", collapsed ? "1" : "0");
   requestAnimationFrame(() => {
@@ -3360,9 +4059,9 @@ function toggleSearchSidebar() {
 function setLeftSidebarCollapsed(collapsed) {
   appShell.classList.toggle("sidebar-collapsed", collapsed);
   leftSidebar.classList.toggle("is-collapsed", collapsed);
-  sidebarToggleButton.textContent = collapsed ? "メニュー" : "閉じる";
-  sidebarToggleButton.title = collapsed ? "左サイドバーを表示" : "左サイドバーを隠す";
-  sidebarToggleButton.setAttribute("aria-label", collapsed ? "左サイドバーを表示" : "左サイドバーを隠す");
+  sidebarToggleButton.textContent = collapsed ? t("nav.menu") : t("common.close");
+  sidebarToggleButton.title = collapsed ? t("nav.showSidebar") : t("nav.hideSidebar");
+  sidebarToggleButton.setAttribute("aria-label", collapsed ? t("nav.showSidebar") : t("nav.hideSidebar"));
   sidebarToggleButton.setAttribute("aria-expanded", String(!collapsed));
   localStorage.setItem("textosphereLeftSidebarCollapsed", collapsed ? "1" : "0");
   requestAnimationFrame(() => {
@@ -3396,8 +4095,8 @@ function getClusterListItems(mode = activeClusterListMode) {
 }
 
 function getClusterListDescription(cluster) {
-  const description = truncateText(cluster.description || "\u8aac\u660e\u306a\u3057", activeClusterListMode === "followed" ? 28 : 34);
-  const followerText = `フォロワー ${Number(cluster.followerCount || 0)}`;
+  const description = truncateText(cluster.description || t("cluster.noDescription"), activeClusterListMode === "followed" ? 28 : 34);
+  const followerText = t("cluster.followers", { count: Number(cluster.followerCount || 0) });
   if (activeClusterListMode !== "followed") return `${description} / ${followerText}`;
   return `${getUserName(cluster.ownerUser)} / ${description} / ${followerText}`;
 }
@@ -3428,9 +4127,9 @@ function renderClusterList() {
   if (listItems.length === 0) {
     const emptyMessage =
       activeClusterListMode === "followed"
-        ? "\u30d5\u30a9\u30ed\u30fc\u4e2d\u306e\u30af\u30e9\u30b9\u30bf\u306f\u307e\u3060\u3042\u308a\u307e\u305b\u3093"
-        : "\u30af\u30e9\u30b9\u30bf\u306f\u307e\u3060\u3042\u308a\u307e\u305b\u3093";
-    clusterList.innerHTML = `<p class="cluster-list-empty">${emptyMessage}</p>`;
+        ? t("cluster.noClusters")
+        : t("cluster.noClusters");
+    clusterList.innerHTML = `<p class="cluster-list-empty">${escapeHtml(emptyMessage)}</p>`;
     return;
   }
 
@@ -3464,10 +4163,10 @@ function canDeleteCluster(cluster) {
 function getClusterMoveOptionsMarkup(currentClusterId) {
   const moveTargets = clusters.filter((cluster) => cluster.id !== currentClusterId);
   if (moveTargets.length === 0) {
-    return `<option value="">移動先なし</option>`;
+    return `<option value="">${escapeHtml(t("cluster.noMoveTarget"))}</option>`;
   }
   return [
-    `<option value="">移動先</option>`,
+    `<option value="">${escapeHtml(t("cluster.moveTo"))}</option>`,
     ...moveTargets.map((cluster) => `<option value="${escapeHtml(cluster.id)}">${escapeHtml(cluster.name)}</option>`),
   ].join("");
 }
@@ -3479,7 +4178,7 @@ function canMoveNodeCluster(node) {
 function renderClusterNodeList(clusterId) {
   const clusterNodes = getNodesByCreatedDesc(nodes.filter((node) => node.clusterId === clusterId));
   if (clusterNodes.length === 0) {
-    clusterNodesContent.innerHTML = `<p class="cluster-nodes-empty">\u3053\u306e\u30af\u30e9\u30b9\u30bf\u306b\u5149\u70b9\u306f\u307e\u3060\u3042\u308a\u307e\u305b\u3093</p>`;
+    clusterNodesContent.innerHTML = `<p class="cluster-nodes-empty">${escapeHtml(t("node.emptyOwn"))}</p>`;
     return clusterNodes.length;
   }
 
@@ -3498,7 +4197,7 @@ function renderClusterNodeList(clusterId) {
       <span class="cluster-node-main">
         <span class="cluster-node-title">${escapeHtml(node.title)}</span>
         <span class="cluster-node-preview">${escapeHtml(truncateText(node.body || node.mediaName || "", 56))}</span>
-        <span class="cluster-node-meta">${typeMeta[node.type].label} / ${escapeHtml(formatDateTime(node.createdAt) || "-")} / Like ${Number(node.likeCount || 0)} / \u63a5\u7d9a ${getNodeRelationCount(node.id)}</span>
+        <span class="cluster-node-meta">${escapeHtml(getTypeLabel(node.type))} / ${escapeHtml(formatDateTime(node.createdAt) || "-")} / Like ${Number(node.likeCount || 0)} / ${escapeHtml(t("node.connectionCount", { count: getNodeRelationCount(node.id) }))}</span>
       </span>
     `;
     button.addEventListener("click", () => {
@@ -3517,7 +4216,7 @@ function renderClusterNodeList(clusterId) {
       const moveField = document.createElement("label");
       moveField.className = "cluster-node-move-field";
       moveField.innerHTML = `
-        <span>移動</span>
+        <span>${escapeHtml(t("cluster.move"))}</span>
         <select class="cluster-node-move-select" data-node-id="${escapeHtml(node.id)}" ${hasMoveTargets ? "" : "disabled"}>
           ${getClusterMoveOptionsMarkup(node.clusterId)}
         </select>
@@ -3533,7 +4232,7 @@ function renderClusterNodeList(clusterId) {
     } else {
       const moveNote = document.createElement("div");
       moveNote.className = "cluster-node-move-note";
-      moveNote.innerHTML = `<span>移動不可</span><small>他ユーザーの光点</small>`;
+      moveNote.innerHTML = `<span>${escapeHtml(t("cluster.cannotMove"))}</span><small>${escapeHtml(t("cluster.otherUserNode"))}</small>`;
       row.appendChild(moveNote);
     }
 
@@ -3547,9 +4246,9 @@ function renderClusterFollowControl(cluster) {
   const isFollowed = isOwnCluster || followedClusterIds.has(cluster.id);
   const locked = isOwnCluster ? "disabled" : "";
   return `
-    <label class="detail-cluster-follow cluster-detail-follow" title="クラスタをフォロー">
+    <label class="detail-cluster-follow cluster-detail-follow" title="${escapeHtml(t("cluster.followTitle"))}">
       <input class="detailClusterFollowInput" type="checkbox" data-cluster-id="${escapeHtml(cluster.id)}" ${isFollowed ? "checked" : ""} ${locked} />
-      <span>フォロー</span>
+      <span>${escapeHtml(t("cluster.follow"))}</span>
     </label>
   `;
 }
@@ -3564,7 +4263,7 @@ function openClusterNodesDialog(clusterId) {
   const description = String(cluster.description || "").trim();
   const createdAtMarkup = renderCreatedAtMeta(clusterDetail.createdAt);
   clusterNodesType.innerHTML = `
-    <span class="detail-kind">クラスタ</span>
+    <span class="detail-kind">${escapeHtml(t("cluster.type"))}</span>
     <span class="detail-cluster-meta">${renderOwnerLink(clusterDetail.ownerUser)}</span>
     ${renderClusterFollowControl(clusterDetail)}
     ${createdAtMarkup}
@@ -3582,7 +4281,7 @@ function openClusterNodesDialog(clusterId) {
   }
   clusterNodesMeta.textContent = metaParts.join(" / ");
   clusterNodesActions.innerHTML = canDeleteCluster(clusterDetail)
-    ? `<button class="danger-button" id="deleteClusterButton" type="button" data-cluster-id="${escapeHtml(cluster.id)}">クラスタを削除</button>`
+    ? `<button class="danger-button" id="deleteClusterButton" type="button" data-cluster-id="${escapeHtml(cluster.id)}">${escapeHtml(t("cluster.delete"))}</button>`
     : "";
   clusterNodesActions.querySelector("#deleteClusterButton")?.addEventListener("click", () => {
     deleteCluster(cluster.id);
@@ -3597,7 +4296,7 @@ function closeClusterNodesDialog() {
     clusterNodesDialog.close();
   }
   clusterNodesActions.innerHTML = "";
-  clusterNodesType.textContent = "クラスタ";
+  clusterNodesType.textContent = t("cluster.type");
 }
 
 function getClusterOptionsMarkup() {
@@ -3625,8 +4324,8 @@ function updateClearLinksButton() {
 
 function updateUniverseModeButton() {
   const isExplore = isExplorationMode();
-  const label = isExplore ? "文脈モードに切り替え" : "探索モードに切り替え";
-  universeModeButton.textContent = isExplore ? "探索" : "文脈";
+  const label = isExplore ? t("universe.switchToContext") : t("universe.switchToExplore");
+  universeModeButton.textContent = isExplore ? t("universe.explore") : t("universe.context");
   universeModeButton.title = label;
   universeModeButton.setAttribute("aria-label", label);
   universeModeButton.classList.toggle("is-explore", isExplore);
@@ -3692,7 +4391,7 @@ function pruneLinksForNode(id) {
 async function deleteCluster(id) {
   const cluster = getClusterById(id);
   if (!cluster || !canDeleteCluster(cluster)) return;
-  const shouldDelete = window.confirm("このクラスタを削除しますか？\nクラスタ内の光点は削除せず、Publicクラスタへ移動します。");
+  const shouldDelete = window.confirm(t("cluster.deleteConfirm"));
   if (!shouldDelete) return;
 
   try {
@@ -3707,7 +4406,7 @@ async function deleteCluster(id) {
     closeClusterNodesDialog();
     renderAll();
   } catch (error) {
-    window.alert("クラスタを削除できませんでした。時間をおいてもう一度お試しください。");
+    window.alert(t("cluster.deleteError"));
   }
 }
 
@@ -3743,7 +4442,7 @@ async function moveNodeToCluster(id, targetClusterId, currentDialogClusterId = n
     if (clusterNodesDialog.open) {
       openClusterNodesDialog(currentDialogClusterId || previousClusterId);
     }
-    window.alert("光点のクラスタを移動できませんでした。時間をおいてもう一度お試しください。");
+    window.alert(t("cluster.moveError"));
   }
 }
 
@@ -3940,7 +4639,7 @@ async function createNodeFromValues({ type, title, body, duration, mediaFile, cl
   const hasDuration = type === "music" || type === "video";
   const safeDuration = hasDuration ? clamp(Number(duration || 180), 10, 900) : null;
   const position = getNewNodePosition(originNode);
-  const safeTitle = title.trim() || `${typeMeta[type].label} ${nodes.length + 1}`;
+  const safeTitle = title.trim() || `${getTypeLabel(type)} ${nodes.length + 1}`;
   const safeBody = String(body || "").replace(/\r\n/g, "\n");
   const safeClusterId = clusters.some((cluster) => cluster.id === clusterId) ? clusterId : getPublicClusterId();
   const newNode = normalizeNode({
@@ -4014,7 +4713,7 @@ async function addNode() {
     return;
   }
   const mediaFile = getMediaFileForType(typeInput.value, mediaFileInput, pastedComposerImage, droppedComposerMedia);
-  setNodeSubmissionPending(true, mediaFile ? "ファイルのアップロードと保存を処理中です。画面を閉じずにお待ちください。" : "光点を保存しています。");
+  setNodeSubmissionPending(true, mediaFile ? t("processing.uploadSave") : t("processing.saveNode"));
   try {
     await createNodeFromValues({
       type: typeInput.value,
@@ -4124,7 +4823,7 @@ async function createLinkBetween(source, target, comment = "") {
     } catch (error) {
       if (error.status === 403) {
         await loadState();
-        window.alert("この接続は作成または編集できません");
+        window.alert(t("connection.cannotEdit"));
         return false;
       }
       apiAvailable = false;
@@ -4155,7 +4854,7 @@ async function createLinkBetween(source, target, comment = "") {
     }
   } catch (error) {
     if (error.status === 403) {
-      window.alert("この接続は作成できません");
+      window.alert(t("connection.cannotCreate"));
       return false;
     }
     apiAvailable = false;
@@ -4532,14 +5231,14 @@ function bindOwnerDetailLinks(container) {
 
 function renderCreatedAtMeta(value) {
   const createdAt = formatDateTime(value);
-  return createdAt ? `<span class="detail-created-at">登録日時 ${escapeHtml(createdAt)}</span>` : "";
+  return createdAt ? `<span class="detail-created-at">${escapeHtml(t("node.createdAt", { date: createdAt }))}</span>` : "";
 }
 
 function renderDetailMeta(node) {
   const cluster = getClusterDetail(node.clusterId);
   const createdAtMarkup = renderCreatedAtMeta(node.createdAt);
   if (!cluster) {
-    return `<span class="detail-kind">${typeMeta[node.type].label}</span>${createdAtMarkup}`;
+    return `<span class="detail-kind">${escapeHtml(getTypeLabel(node.type))}</span>${createdAtMarkup}`;
   }
 
   const owner = cluster.ownerUser;
@@ -4547,13 +5246,13 @@ function renderDetailMeta(node) {
   const isFollowed = isOwnCluster || followedClusterIds.has(cluster.id);
   const locked = isOwnCluster ? "disabled" : "";
   return `
-    <span class="detail-kind">${typeMeta[node.type].label}</span>
+    <span class="detail-kind">${escapeHtml(getTypeLabel(node.type))}</span>
     <span class="detail-cluster-meta">
       ${renderOwnerLink(owner)}
       <span class="detail-cluster-label">- ${escapeHtml(cluster.name)}</span>
-      <label class="detail-cluster-follow" title="クラスタをフォロー">
+      <label class="detail-cluster-follow" title="${escapeHtml(t("cluster.followTitle"))}">
         <input class="detailClusterFollowInput" type="checkbox" data-cluster-id="${escapeHtml(cluster.id)}" ${isFollowed ? "checked" : ""} ${locked} />
-        <span>フォロー</span>
+        <span>${escapeHtml(t("cluster.follow"))}</span>
       </label>
     </span>
     ${createdAtMarkup}
@@ -4638,7 +5337,7 @@ function renderUserDetailCluster(cluster) {
     <label class="user-detail-cluster">
       <span>
         <strong>${escapeHtml(cluster.name)}</strong>
-        <small>${escapeHtml(truncateText(cluster.description || "説明なし", 60))}</small>
+        <small>${escapeHtml(truncateText(cluster.description || t("cluster.noDescription"), 60))}</small>
       </span>
       <input class="userDetailClusterFollowInput" type="checkbox" data-cluster-id="${escapeHtml(cluster.id)}" ${checked} ${locked} />
     </label>
@@ -4663,12 +5362,12 @@ function renderUserDetailPage(data) {
   const userClusters = data.clusters.map(normalizeCluster);
   const isCurrentUser = currentUser && user.id === currentUser.id;
   const userActions = isCurrentUser
-    ? `<div class="user-detail-actions"><button class="danger-button user-detail-delete-user" type="button">ユーザー削除</button><button class="secondary-button user-detail-edit-profile" type="button">プロフィール編集</button><button class="secondary-button user-detail-logout" type="button">ログアウト</button></div>`
+    ? `<div class="user-detail-actions"><button class="danger-button user-detail-delete-user" type="button">${escapeHtml(t("profile.deleteUser"))}</button><button class="secondary-button user-detail-edit-profile" type="button">${escapeHtml(t("profile.editProfile"))}</button><button class="secondary-button user-detail-logout" type="button">${escapeHtml(t("common.logout"))}</button></div>`
     : `<div class="user-detail-actions"><button class="${
         data.blockedByCurrentUser ? "secondary-button" : "danger-button"
       } user-detail-block" type="button" data-user-id="${escapeHtml(user.id)}" data-blocked="${
         data.blockedByCurrentUser ? "1" : "0"
-      }">${data.blockedByCurrentUser ? "ブロック解除" : "ブロック"}</button></div>`;
+      }">${escapeHtml(data.blockedByCurrentUser ? t("common.unblock") : t("common.block"))}</button></div>`;
   return `
     <header class="user-detail-header">
       ${renderUserDetailAvatar(user)}
@@ -4679,19 +5378,19 @@ function renderUserDetailPage(data) {
       ${userActions}
     </header>
     <section class="user-detail-section">
-      <h3>自己紹介文</h3>
-      <p class="user-detail-bio">${escapeHtml(user.bio || "自己紹介文は未設定です")}</p>
+      <h3>${escapeHtml(t("profile.bioHeading"))}</h3>
+      <p class="user-detail-bio">${escapeHtml(user.bio || t("profile.emptyBio"))}</p>
     </section>
     <section class="user-detail-section">
-      <div class="user-detail-section-heading"><h3>クラスタ一覧</h3><span>${userClusters.length}</span></div>
+      <div class="user-detail-section-heading"><h3>${escapeHtml(t("profile.userClusters"))}</h3><span>${userClusters.length}</span></div>
       <div class="user-detail-list">
-        ${userClusters.length ? userClusters.map(renderUserDetailCluster).join("") : `<p class="user-detail-empty">クラスタはまだありません</p>`}
+        ${userClusters.length ? userClusters.map(renderUserDetailCluster).join("") : `<p class="user-detail-empty">${escapeHtml(t("cluster.noClusters"))}</p>`}
       </div>
     </section>
     <section class="user-detail-section">
-      <div class="user-detail-section-heading"><h3>光点一覧</h3><span>${userNodes.length}</span></div>
+      <div class="user-detail-section-heading"><h3>${escapeHtml(t("profile.userNodes"))}</h3><span>${userNodes.length}</span></div>
       <div class="user-detail-list">
-        ${userNodes.length ? userNodes.map(renderUserDetailNode).join("") : `<p class="user-detail-empty">光点はまだありません</p>`}
+        ${userNodes.length ? userNodes.map(renderUserDetailNode).join("") : `<p class="user-detail-empty">${escapeHtml(t("node.emptyOwn"))}</p>`}
       </div>
     </section>
   `;
@@ -4701,9 +5400,7 @@ async function setUserBlock(userId, shouldBlock, button) {
   if (!userId || (currentUser && userId === currentUser.id)) return;
   if (
     shouldBlock &&
-    !window.confirm(
-      "このユーザーは自分の光点に対して接続線を作ることが出来なくなります。既存の接続線についてもこのユーザーが作成したものは削除されます。よろしいですか？",
-    )
+    !window.confirm(t("profile.blockConfirm"))
   ) {
     return;
   }
@@ -4719,15 +5416,13 @@ async function setUserBlock(userId, shouldBlock, button) {
     await openUserDetail(userId);
   } catch (error) {
     if (button) button.disabled = false;
-    window.alert(shouldBlock ? "ブロックできませんでした" : "ブロック解除できませんでした");
+    window.alert(shouldBlock ? t("profile.blockError") : t("profile.unblockError"));
   }
 }
 
 async function deleteCurrentUser(button) {
   if (!currentUser) return;
-  const confirmed = window.confirm(
-    "ユーザーを削除します。この操作は取り消せません。あなたの投稿、クラスタ、接続、ログイン情報も削除されます。よろしいですか？",
-  );
+  const confirmed = window.confirm(t("profile.deleteConfirm"));
   if (!confirmed) return;
 
   if (button) button.disabled = true;
@@ -4736,7 +5431,7 @@ async function deleteCurrentUser(button) {
     clearAuth();
   } catch (error) {
     if (button) button.disabled = false;
-    window.alert("ユーザーを削除できませんでした。時間をおいてもう一度お試しください。");
+    window.alert(t("profile.deleteError"));
   }
 }
 
@@ -4782,6 +5477,7 @@ function bindUserDetailPage() {
 
 async function openUserDetail(userId) {
   if (!userId) return;
+  activeUserDetailId = userId;
   try {
     const data = await apiRequest(`/users/${userId}`);
     data.followedClusterIds.forEach((clusterId) => followedClusterIds.add(clusterId));
@@ -4791,7 +5487,7 @@ async function openUserDetail(userId) {
       userDetailDialog.showModal();
     }
   } catch (error) {
-    userDetailContent.innerHTML = `<p class="user-detail-empty">ユーザー詳細を表示できませんでした</p>`;
+    userDetailContent.innerHTML = `<p class="user-detail-empty">${escapeHtml(t("profile.noUserDetail"))}</p>`;
     if (!userDetailDialog.open) {
       userDetailDialog.showModal();
     }
@@ -4799,6 +5495,7 @@ async function openUserDetail(userId) {
 }
 
 function closeUserDetailDialog() {
+  activeUserDetailId = null;
   if (userDetailDialog.open) {
     userDetailDialog.close();
   }
@@ -4812,9 +5509,9 @@ function getDetailPreview(node) {
     return node.mediaName;
   }
   if (node.type === "music" || node.type === "video") {
-    return `${formatTime(node.duration || 0)} の${typeMeta[node.type].label}`;
+    return `${formatTime(node.duration || 0)} ${getTypeLabel(node.type)}`;
   }
-  return "本文なし";
+  return t("node.noBody");
 }
 
 function renderRelationNodeCard(node, link) {
@@ -4829,7 +5526,7 @@ function renderRelationNodeCard(node, link) {
     <button class="relation-node-card" type="button" data-related-node-id="${escapeHtml(node.id)}" style="--node-color: ${typeMeta[node.type].color}">
       <span class="relation-thumb" aria-hidden="true">${mediaThumb}</span>
       <span class="relation-card-main">
-        <span class="relation-card-meta">${typeMeta[node.type].label}</span>
+        <span class="relation-card-meta">${escapeHtml(getTypeLabel(node.type))}</span>
         <span class="relation-card-title">${escapeHtml(node.title)}</span>
         <span class="relation-card-body">${escapeHtml(getDetailPreview(node))}</span>
         ${comment ? `<span class="relation-card-comment">${escapeHtml(comment)}</span>` : ""}
@@ -4874,8 +5571,8 @@ function renderDetailLayout(node) {
 
   return `
     <div class="${layoutClass}">
-      ${renderRelationColumn("ソースノード", sourceItems, "source")}
-      <section class="detail-current-node" aria-label="現在の光点">
+      ${renderRelationColumn(t("node.sourceNodes"), sourceItems, "source")}
+      <section class="detail-current-node" aria-label="${escapeHtml(t("node.open"))}">
         ${isTextNodeType(node.type) ? renderTextDetail(node) : renderMediaDetail(node)}
         ${renderRelayNodeAction(node)}
         ${renderNodeLikeAction(node)}
@@ -4884,7 +5581,7 @@ function renderDetailLayout(node) {
         ${renderDetailComposer()}
         ${renderDeleteNodeAction()}
       </section>
-      ${renderRelationColumn("ターゲットノード", targetItems, "target")}
+      ${renderRelationColumn(t("node.targetNodes"), targetItems, "target")}
     </div>
   `;
 }
@@ -4909,15 +5606,15 @@ function renderNodeFavoriteAction(node) {
   const className = node.favoritedByCurrentUser ? "node-favorite-button is-favorited" : "node-favorite-button";
   const disabled = node.fixedFavoriteByCurrentUser ? "disabled" : "";
   const label = node.fixedFavoriteByCurrentUser
-    ? "固定お気に入り"
+    ? t("favorite.pinned")
     : node.favoritedByCurrentUser
-      ? "お気に入り解除"
-      : "お気に入りに追加";
+      ? t("favorite.remove")
+      : t("favorite.add");
   return `
     <section class="node-favorite-panel" aria-label="favorite node">
       <button class="${className}" id="detailFavoriteButton" type="button" aria-pressed="${pressed}" ${disabled}>
         <span class="node-favorite-icon" aria-hidden="true">★</span>
-        <span>${label}</span>
+        <span>${escapeHtml(label)}</span>
       </button>
     </section>
   `;
@@ -4930,10 +5627,10 @@ function renderShareNodeAction(node) {
   return `
     <section class="node-share-panel" aria-label="share node">
       <div class="node-share-copy">
-        <strong>共有</strong>
-        <span>${canManage ? (enabled ? "共有可能" : "共有不可") : "公開リンクを見る"}</span>
+        <strong>${escapeHtml(t("share.panelTitle"))}</strong>
+        <span>${escapeHtml(canManage ? (enabled ? t("share.enabled") : t("share.disabled")) : t("share.publicLinks"))}</span>
       </div>
-      <button class="secondary-button" id="openShareDialogButton" type="button">${canManage ? "共有設定" : "共有リンク"}</button>
+      <button class="secondary-button" id="openShareDialogButton" type="button">${escapeHtml(canManage ? t("share.settings") : t("share.links"))}</button>
     </section>
   `;
 }
@@ -4949,7 +5646,7 @@ function updateNodeShareEnabled(id, shareEnabled) {
 function renderShareDialogContent(node, data = null) {
   if (!node) return;
   if (!data) {
-    shareDialogContent.innerHTML = `<p class="share-empty">共有設定を読み込んでいます</p>`;
+    shareDialogContent.innerHTML = `<p class="share-empty">${escapeHtml(t("share.loading"))}</p>`;
     return;
   }
 
@@ -4964,19 +5661,19 @@ function renderShareDialogContent(node, data = null) {
           return `
             <article class="share-link-item${disabled ? " is-disabled" : ""}">
               <div>
-                <strong>${share.mode === "single" ? "光点だけ" : "文脈まで"}</strong>
-                <small>${disabled ? "無効化済み" : "有効"} / ${escapeHtml(formatDateTime(share.createdAt) || "-")}</small>
+                <strong>${escapeHtml(share.mode === "single" ? t("share.nodeOnly") : t("share.withContext"))}</strong>
+                <small>${escapeHtml(disabled ? t("share.disabledStatus") : t("share.enabledStatus"))} / ${escapeHtml(formatDateTime(share.createdAt) || "-")}</small>
               </div>
-              <input type="text" readonly value="${escapeHtml(url)}" aria-label="共有URL" />
+              <input type="text" readonly value="${escapeHtml(url)}" aria-label="${escapeHtml(t("share.urlLabel"))}" />
               <div class="share-link-actions">
-                <button class="ghost-button shareCopyButton" type="button" data-share-url="${escapeHtml(url)}" ${disabled ? "disabled" : ""}>コピー</button>
-                ${canManage ? `<button class="danger-button shareDisableButton" type="button" data-share-id="${escapeHtml(share.id)}" ${disabled ? "disabled" : ""}>無効化</button>` : ""}
+                <button class="ghost-button shareCopyButton" type="button" data-share-url="${escapeHtml(url)}" ${disabled ? "disabled" : ""}>${escapeHtml(t("common.copy"))}</button>
+                ${canManage ? `<button class="danger-button shareDisableButton" type="button" data-share-id="${escapeHtml(share.id)}" ${disabled ? "disabled" : ""}>${escapeHtml(t("share.disable"))}</button>` : ""}
               </div>
             </article>
           `;
         })
         .join("")
-    : `<p class="share-empty">${canManage ? "共有リンクはまだありません" : "公開中の共有リンクはまだありません"}</p>`;
+    : `<p class="share-empty">${escapeHtml(canManage ? t("share.noLinks") : t("share.noPublicLinks"))}</p>`;
 
   shareDialogContent.innerHTML = `
     ${
@@ -4984,28 +5681,28 @@ function renderShareDialogContent(node, data = null) {
         ? `<section class="share-settings">
             <label class="share-enabled-toggle">
               <input id="shareEnabledInput" type="checkbox" ${shareEnabled ? "checked" : ""} />
-              <span>この光点を共有可能にする</span>
+              <span>${escapeHtml(t("share.allow"))}</span>
             </label>
-            <p>共有不可にすると、新しい共有リンクは作成できず、既存の共有リンクも閲覧できなくなります。</p>
+            <p>${escapeHtml(t("share.disableNote"))}</p>
           </section>
           <section class="share-create-panel${shareEnabled ? "" : " is-disabled"}">
-            <div class="share-mode-grid" role="radiogroup" aria-label="共有範囲">
+            <div class="share-mode-grid" role="radiogroup" aria-label="${escapeHtml(t("share.range"))}">
               <label>
                 <input type="radio" name="shareMode" value="context" checked ${shareEnabled ? "" : "disabled"} />
-                <span>文脈まで共有</span>
-                <small>ソース・ターゲットの光点と接続コメントも表示</small>
+                <span>${escapeHtml(t("share.context"))}</span>
+                <small>${escapeHtml(t("share.contextHint"))}</small>
               </label>
               <label>
                 <input type="radio" name="shareMode" value="single" ${shareEnabled ? "" : "disabled"} />
-                <span>この光点だけ共有</span>
-                <small>本文とメディアのみ表示</small>
+                <span>${escapeHtml(t("share.single"))}</span>
+                <small>${escapeHtml(t("share.singleHint"))}</small>
               </label>
             </div>
-            <button class="primary-button" id="createShareLinkButton" type="button" ${shareEnabled ? "" : "disabled"}>共有リンクを作成</button>
+            <button class="primary-button" id="createShareLinkButton" type="button" ${shareEnabled ? "" : "disabled"}>${escapeHtml(t("share.create"))}</button>
           </section>`
-        : `<section class="share-settings is-readonly"><p>この光点の所有者が公開した共有リンクを表示しています。</p></section>`
+        : `<section class="share-settings is-readonly"><p>${escapeHtml(t("share.ownerLinks"))}</p></section>`
     }
-    <section class="share-link-list" aria-label="共有リンク一覧">
+    <section class="share-link-list" aria-label="${escapeHtml(t("share.links"))}">
       ${shareRows}
     </section>
   `;
@@ -5037,7 +5734,7 @@ function bindShareDialogContent(nodeId) {
       updateNodeShareEnabled(nodeId, result.shareEnabled !== false);
       await refreshShareDialog(nodeId);
     } catch (error) {
-      window.alert("共有設定を保存できませんでした。時間をおいてもう一度お試しください。");
+      window.alert(t("share.saveError"));
       await refreshShareDialog(nodeId);
     }
   });
@@ -5054,7 +5751,7 @@ function bindShareDialogContent(nodeId) {
       await navigator.clipboard?.writeText(getAbsoluteShareUrl(share)).catch(() => {});
       await refreshShareDialog(nodeId);
     } catch (error) {
-      window.alert("共有リンクを作成できませんでした。共有可能になっているか確認してください。");
+      window.alert(t("share.createError"));
       button.disabled = false;
     }
   });
@@ -5064,7 +5761,7 @@ function bindShareDialogContent(nodeId) {
       await navigator.clipboard?.writeText(button.dataset.shareUrl || "").catch(() => {});
       button.classList.add("is-copied");
       const originalLabel = button.textContent;
-      button.textContent = "コピー済み";
+      button.textContent = t("common.copied");
       window.setTimeout(() => {
         button.classList.remove("is-copied");
         button.textContent = originalLabel;
@@ -5074,14 +5771,14 @@ function bindShareDialogContent(nodeId) {
 
   shareDialogContent.querySelectorAll(".shareDisableButton").forEach((button) => {
     button.addEventListener("click", async () => {
-      const shouldDisable = window.confirm("この共有リンクを無効化しますか？");
+      const shouldDisable = window.confirm(t("share.disableConfirm"));
       if (!shouldDisable) return;
       button.disabled = true;
       try {
         await apiRequest(`/node-shares/${button.dataset.shareId}`, { method: "DELETE" });
         await refreshShareDialog(nodeId);
       } catch (error) {
-        window.alert("共有リンクを無効化できませんでした。時間をおいてもう一度お試しください。");
+        window.alert(t("share.disableError"));
         button.disabled = false;
       }
     });
@@ -5098,7 +5795,7 @@ async function openShareDialog(nodeId) {
   try {
     await refreshShareDialog(nodeId);
   } catch (error) {
-    shareDialogContent.innerHTML = `<p class="share-empty">共有設定を読み込めませんでした</p>`;
+    shareDialogContent.innerHTML = `<p class="share-empty">${escapeHtml(t("share.loadError"))}</p>`;
   }
 }
 
@@ -5122,23 +5819,23 @@ function renderRelayNodeAction(node) {
   const isOwner = node.ownerUserId === currentUser.id;
   const canOpen = isOwner || node.relayParticipant;
   const isClosed = node.relayStatus === "closed";
-  const label = isClosed ? "通信ログ閲覧" : "通信開始";
+  const label = isClosed ? t("relay.viewLog") : t("relay.start");
   const stateLabel = isClosed
-    ? "通信は終了しています"
+    ? t("relay.closed")
     : node.relaySessionId
       ? canOpen
-        ? "通信中"
-        : "通信相手にのみ公開"
+        ? t("relay.active")
+        : t("relay.private")
       : isOwner
-        ? "通信先を選択できます"
-        : "持ち主が通信を開始すると有効になります";
+        ? t("relay.selectable")
+        : t("relay.ownerStarts");
   return `
     <section class="node-relay-panel" aria-label="relay communication">
       <div class="node-relay-copy">
-        <strong>中継通信</strong>
+        <strong>${escapeHtml(t("type.relay"))}</strong>
         <span>${escapeHtml(stateLabel)}</span>
       </div>
-      <button class="primary-button" id="openRelayDialogButton" type="button" ${canOpen ? "" : "disabled"}>${label}</button>
+      <button class="primary-button" id="openRelayDialogButton" type="button" ${canOpen ? "" : "disabled"}>${escapeHtml(label)}</button>
     </section>
   `;
 }
@@ -5162,8 +5859,8 @@ function renderRelayRecipientPicker(data) {
   return `
     <section class="relay-recipient-panel">
       <div class="relay-section-head">
-        <strong>通信先</strong>
-        <span>${likedUsers.length}人</span>
+        <strong>${escapeHtml(t("relay.recipients"))}</strong>
+        <span>${escapeHtml(t("relay.peopleCount", { count: likedUsers.length }))}</span>
       </div>
       <div class="relay-recipient-list">
         ${
@@ -5179,10 +5876,10 @@ function renderRelayRecipientPicker(data) {
                   `,
                 )
                 .join("")
-            : `<p class="relay-empty">この光点にLikeしているユーザーはまだいません</p>`
+            : `<p class="relay-empty">${escapeHtml(t("relay.noLikedUsers"))}</p>`
         }
       </div>
-      <button class="primary-button" id="confirmRelayRecipientsButton" type="button" ${likedUsers.length ? "" : "disabled"}>決定</button>
+      <button class="primary-button" id="confirmRelayRecipientsButton" type="button" ${likedUsers.length ? "" : "disabled"}>${escapeHtml(t("relay.confirmRecipients"))}</button>
     </section>
   `;
 }
@@ -5250,7 +5947,7 @@ function renderRelayMessage(message) {
         <span>${escapeHtml(formatDateTime(message.createdAt) || "-")}</span>
       </div>
       ${message.body ? `<p>${escapeHtml(message.body)}</p>` : ""}
-      ${imageUrl ? `<img class="relay-message-image" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(message.imageName || "通信画像")}" />` : ""}
+      ${imageUrl ? `<img class="relay-message-image" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(message.imageName || t("media.relayImage"))}" />` : ""}
       ${renderRelayMessageReactions(message, mine)}
     </article>
   `;
@@ -5258,28 +5955,28 @@ function renderRelayMessage(message) {
 
 function renderRelayComposer(readOnly) {
   if (readOnly) {
-    return `<p class="relay-readonly-note">通信ログは読み取り専用です</p>`;
+    return `<p class="relay-readonly-note">${escapeHtml(t("relay.readonly"))}</p>`;
   }
   return `
     <form class="relay-compose">
-      <textarea class="relayMessageInput" rows="3" maxlength="${INPUT_LIMITS.longText}" placeholder="メッセージを入力"></textarea>
+      <textarea class="relayMessageInput" rows="3" maxlength="${INPUT_LIMITS.longText}" placeholder="${escapeHtml(t("relay.messagePlaceholder"))}"></textarea>
       <div class="relay-compose-tools">
         <div class="relayFileControl">
           <label class="relayFilePicker">
-            <span>ファイル選択</span>
+            <span>${escapeHtml(t("media.selectFile"))}</span>
             <input class="relayImageInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" />
           </label>
-          <span class="relayFileStatus">ファイルが選択されていません</span>
+          <span class="relayFileStatus">${escapeHtml(t("media.noFile"))}</span>
         </div>
         <div class="clipboard-image-panel relayPastePanel" tabindex="0">
           <div class="clipboard-image-copy">
-            <strong>画像を貼り付け</strong>
-            <small class="relayPasteStatus">ここをクリックして Ctrl+V で貼り付けできます</small>
+            <strong>${escapeHtml(t("media.pasteImage"))}</strong>
+            <small class="relayPasteStatus">${escapeHtml(t("media.pasteHint"))}</small>
           </div>
           <img class="relayPastePreview" alt="" hidden />
-          <button class="ghost-button relayPasteClear" type="button" hidden>解除</button>
+          <button class="ghost-button relayPasteClear" type="button" hidden>${escapeHtml(t("common.clear"))}</button>
         </div>
-        <button class="primary-button relaySendButton" type="submit">送信</button>
+        <button class="primary-button relaySendButton" type="submit">${escapeHtml(t("relay.send"))}</button>
       </div>
     </form>
   `;
@@ -5287,7 +5984,7 @@ function renderRelayComposer(readOnly) {
 
 function setRelayFileStatus(fileStatus, file = null) {
   if (!fileStatus) return;
-  fileStatus.textContent = file ? file.name : "ファイルが選択されていません";
+  fileStatus.textContent = file ? file.name : t("media.noFile");
 }
 
 function getRelayScrollSnapshot(forceScrollBottom = false) {
@@ -5322,7 +6019,7 @@ function restoreRelayMessageScroll(snapshot) {
 function renderRelayDialogContent(data = null, options = {}) {
   const scrollSnapshot = getRelayScrollSnapshot(Boolean(options.forceScrollBottom));
   if (!data) {
-    relayDialogContent.innerHTML = `<p class="relay-empty">通信を読み込んでいます</p>`;
+    relayDialogContent.innerHTML = `<p class="relay-empty">${escapeHtml(t("relay.loading"))}</p>`;
     return;
   }
   const participants = data.participants || [];
@@ -5333,30 +6030,30 @@ function renderRelayDialogContent(data = null, options = {}) {
   relayDialogContent.innerHTML = `
     ${renderRelayRecipientPicker(data)}
     <section class="relay-chat-grid ${hasSession ? "" : "is-waiting"}">
-      <aside class="relay-side relay-self" aria-label="自分">
-        <div class="relay-section-head"><strong>自分</strong></div>
+      <aside class="relay-side relay-self" aria-label="${escapeHtml(t("relay.self"))}">
+        <div class="relay-section-head"><strong>${escapeHtml(t("relay.self"))}</strong></div>
         ${userSummaryMarkup(me)}
       </aside>
-      <section class="relay-chat-space" aria-label="チャット">
+      <section class="relay-chat-space" aria-label="${escapeHtml(t("relay.chat"))}">
         <div class="relay-message-list">
           ${
             hasSession
-              ? (data.messages || []).map(renderRelayMessage).join("") || `<p class="relay-empty">メッセージはまだありません</p>`
-              : `<p class="relay-empty">通信先を選択して決定すると通信が始まります</p>`
+              ? (data.messages || []).map(renderRelayMessage).join("") || `<p class="relay-empty">${escapeHtml(t("relay.noMessages"))}</p>`
+              : `<p class="relay-empty">${escapeHtml(t("relay.selectThenStart"))}</p>`
           }
         </div>
         ${hasSession ? renderRelayComposer(readOnly) : ""}
       </section>
-      <aside class="relay-side relay-others" aria-label="通信相手">
-        <div class="relay-section-head"><strong>通信相手</strong><span>${others.length}</span></div>
+      <aside class="relay-side relay-others" aria-label="${escapeHtml(t("relay.others"))}">
+        <div class="relay-section-head"><strong>${escapeHtml(t("relay.others"))}</strong><span>${others.length}</span></div>
         <div class="relay-user-list">
-          ${others.length ? others.map((user) => userSummaryMarkup(user)).join("") : `<p class="relay-empty">未決定</p>`}
+          ${others.length ? others.map((user) => userSummaryMarkup(user)).join("") : `<p class="relay-empty">${escapeHtml(t("relay.undecided"))}</p>`}
         </div>
       </aside>
     </section>
     ${
       data.canManage && hasSession && !data.readOnly
-        ? `<button class="danger-button relayCloseButton" type="button">通信終了</button>`
+        ? `<button class="danger-button relayCloseButton" type="button">${escapeHtml(t("relay.close"))}</button>`
         : ""
     }
   `;
@@ -5379,7 +6076,7 @@ async function refreshRelayDialog({ silent = false, forceScrollBottom = false } 
     return data;
   } catch (error) {
     if (!silent) {
-      relayDialogContent.innerHTML = `<p class="relay-empty">通信を開けませんでした</p>`;
+      relayDialogContent.innerHTML = `<p class="relay-empty">${escapeHtml(t("relay.openError"))}</p>`;
     }
     return null;
   } finally {
@@ -5438,7 +6135,7 @@ function bindRelayDialogContent(data) {
         await refreshRelayDialog();
       } catch (error) {
         button.disabled = false;
-        window.alert("リアクションを送信できませんでした");
+        window.alert(t("relay.reactionError"));
       }
     });
   });
@@ -5447,7 +6144,7 @@ function bindRelayDialogContent(data) {
     const button = event.currentTarget;
     const userIds = Array.from(relayDialogContent.querySelectorAll(".relay-recipient-item input:checked")).map((input) => input.value);
     if (userIds.length === 0) {
-      window.alert("通信先を選択してください");
+      window.alert(t("relay.selectError"));
       return;
     }
     button.disabled = true;
@@ -5468,7 +6165,7 @@ function bindRelayDialogContent(data) {
       }
       refreshNotifications();
     } catch (error) {
-      window.alert("通信を開始できませんでした");
+      window.alert(t("relay.startError"));
       button.disabled = false;
     }
   });
@@ -5537,13 +6234,13 @@ function bindRelayDialogContent(data) {
       clearPastedImage(pastedRelayImage, pastePreview, pasteStatus, pasteClearButton, pastePanel);
       await refreshRelayDialog({ forceScrollBottom: true });
     } catch (error) {
-      window.alert("メッセージを送信できませんでした");
+      window.alert(t("relay.messageError"));
       sendButton.disabled = false;
     }
   });
 
   relayDialogContent.querySelector(".relayCloseButton")?.addEventListener("click", async (event) => {
-    const shouldClose = window.confirm("この光点での通信を終了しますか？");
+    const shouldClose = window.confirm(t("relay.closeConfirm"));
     if (!shouldClose) return;
     const button = event.currentTarget;
     button.disabled = true;
@@ -5557,7 +6254,7 @@ function bindRelayDialogContent(data) {
         bindDetailActions(nodes.find((node) => node.id === data.nodeId));
       }
     } catch (error) {
-      window.alert("通信を終了できませんでした");
+      window.alert(t("relay.closeError"));
       button.disabled = false;
     }
   });
@@ -5608,10 +6305,10 @@ function refreshDetailFavoriteButton(id) {
   favoriteButton.setAttribute("aria-pressed", String(node.favoritedByCurrentUser));
   favoriteButton.disabled = Boolean(node.fixedFavoriteByCurrentUser);
   favoriteButton.querySelector("span:last-child").textContent = node.fixedFavoriteByCurrentUser
-    ? "固定お気に入り"
+    ? t("favorite.pinned")
     : node.favoritedByCurrentUser
-      ? "お気に入り解除"
-      : "お気に入りに追加";
+      ? t("favorite.remove")
+      : t("favorite.add");
 }
 
 async function toggleNodeLike(id) {
@@ -5672,56 +6369,56 @@ async function toggleNodeFavorite(id) {
 function renderDetailComposer() {
   return `
     <section class="detail-node-composer" aria-label="linked node composer">
-      <div class="panel-heading"><h2>この光点から追加</h2></div>
-      <button class="panel-toggle detailComposerToggle" type="button" aria-expanded="false" aria-controls="detailComposerPanel">\u3053\u306e\u5149\u70b9\u304b\u3089\u8ffd\u52a0</button>
+      <div class="panel-heading"><h2>${escapeHtml(t("composer.addFromNode"))}</h2></div>
+      <button class="panel-toggle detailComposerToggle" type="button" aria-expanded="false" aria-controls="detailComposerPanel">${escapeHtml(t("composer.addFromNode"))}</button>
       <div class="detail-composer-grid" id="detailComposerPanel" hidden>
         <label class="field">
-          <span>クラスタ</span>
+          <span>${escapeHtml(t("cluster.type"))}</span>
           <select class="detailComposerCluster"></select>
         </label>
         <label class="field">
-          <span>タイプ</span>
+          <span>${escapeHtml(t("node.type"))}</span>
           <select class="detailComposerType">
-            <option value="text">テキスト</option>
-            <option value="image">画像</option>
-            <option value="music">音楽</option>
-            <option value="video">映像</option>
-            <option value="relay">中継通信</option>
+            <option value="text">${escapeHtml(t("type.text"))}</option>
+            <option value="image">${escapeHtml(t("type.image"))}</option>
+            <option value="music">${escapeHtml(t("type.music"))}</option>
+            <option value="video">${escapeHtml(t("type.video"))}</option>
+            <option value="relay">${escapeHtml(t("type.relay"))}</option>
           </select>
         </label>
         <label class="field">
-          <span>タイトル</span>
-          <input class="detailComposerTitle" type="text" placeholder="新しい光点のタイトル" maxlength="${INPUT_LIMITS.nodeTitle}" />
+          <span>${escapeHtml(t("node.title"))}</span>
+          <input class="detailComposerTitle" type="text" placeholder="${escapeHtml(t("node.newTitlePlaceholder"))}" maxlength="${INPUT_LIMITS.nodeTitle}" />
         </label>
         <label class="field">
-          <span>本文</span>
-          <textarea class="detailComposerBody" rows="4" placeholder="本文を入力してください" maxlength="${INPUT_LIMITS.longText}"></textarea>
+          <span>${escapeHtml(t("node.body"))}</span>
+          <textarea class="detailComposerBody" rows="4" placeholder="${escapeHtml(t("node.bodyPlaceholder"))}" maxlength="${INPUT_LIMITS.longText}"></textarea>
         </label>
         <div class="field detailComposerMedia is-hidden">
-          <span>ファイル</span>
+          <span>${escapeHtml(t("common.file"))}</span>
           <input class="detailComposerFile" type="file" accept="image/png,image/jpeg,image/gif,audio/mpeg,video/mp4,.png,.jpg,.jpeg,.gif,.mp3,.mp4" />
           <div class="media-drop-zone detailComposerDropZone">
-            <strong>ファイルをドロップ</strong>
-            <small class="detailComposerDropStatus">ここへファイルをドラッグ＆ドロップできます</small>
-            <button class="ghost-button detailComposerDropClear" type="button" hidden>解除</button>
+            <strong>${escapeHtml(t("media.dropFile"))}</strong>
+            <small class="detailComposerDropStatus">${escapeHtml(t("media.dropAny"))}</small>
+            <button class="ghost-button detailComposerDropClear" type="button" hidden>${escapeHtml(t("common.clear"))}</button>
           </div>
           <div class="clipboard-image-panel detailComposerPastePanel is-hidden" tabindex="0">
             <div class="clipboard-image-copy">
-              <strong>画像を貼り付け</strong>
-              <small class="detailComposerPasteStatus">ここをクリックして Ctrl+V で貼り付けできます</small>
+              <strong>${escapeHtml(t("media.pasteImage"))}</strong>
+              <small class="detailComposerPasteStatus">${escapeHtml(t("media.pasteHint"))}</small>
             </div>
             <img class="detailComposerPastePreview" alt="" hidden />
-            <button class="ghost-button detailComposerPasteClear" type="button" hidden>解除</button>
+            <button class="ghost-button detailComposerPasteClear" type="button" hidden>${escapeHtml(t("common.clear"))}</button>
           </div>
           <div class="duration-field detailComposerDurationField is-hidden">
-            <span>再生時間</span>
+            <span>${escapeHtml(t("media.duration"))}</span>
             <div class="duration-grid">
               <input class="detailComposerDuration" type="number" min="10" max="900" value="180" />
-              <span>秒</span>
+              <span>${escapeHtml(t("media.seconds"))}</span>
             </div>
           </div>
         </div>
-        <button class="primary-button detailComposerAdd" type="button">光点を追加して線で繋ぐ</button>
+        <button class="primary-button detailComposerAdd" type="button">${escapeHtml(t("composer.addAndConnect"))}</button>
       </div>
     </section>
   `;
@@ -5733,7 +6430,7 @@ function renderDeleteNodeAction() {
 
   return `
     <div class="detail-actions">
-      <button class="danger-button" id="deleteNodeButton" type="button">光点を削除</button>
+      <button class="danger-button" id="deleteNodeButton" type="button">${escapeHtml(t("node.delete"))}</button>
     </div>
   `;
 }
@@ -5850,7 +6547,7 @@ function bindDetailComposer(originNode) {
       return;
     }
     const mediaFile = getMediaFileForType(typeField.value, fileField, pastedDetailImage, droppedDetailMedia);
-    setNodeSubmissionPending(true, mediaFile ? "ファイルのアップロードと接続を処理中です。画面を閉じずにお待ちください。" : "光点の保存と接続を処理中です。");
+    setNodeSubmissionPending(true, mediaFile ? t("processing.uploadConnect") : t("processing.saveConnect"));
     try {
       const createdNode = await createNodeFromValues({
         type: typeField.value,
@@ -5882,7 +6579,7 @@ function bindDeleteNodeAction(node) {
   if (!deleteButton) return;
 
   deleteButton.addEventListener("click", () => {
-    const shouldDelete = window.confirm("この光点を削除しますか？");
+    const shouldDelete = window.confirm(t("node.deleteConfirm"));
     if (!shouldDelete) return;
     deleteNode(node.id);
   });
@@ -6264,6 +6961,9 @@ clearClipboardImageButton.addEventListener("click", () => {
 });
 addButton.addEventListener("click", addNode);
 addClusterButton.addEventListener("click", addCluster);
+document.querySelectorAll("[data-locale-choice]").forEach((button) => {
+  button.addEventListener("click", () => setLocale(button.dataset.localeChoice));
+});
 loginButton.addEventListener("click", login);
 loginPasswordInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" || event.isComposing) return;
@@ -6365,6 +7065,7 @@ relayDialog?.addEventListener("close", () => {
   activeRelayData = null;
 });
 
+applyLocale();
 setSearchSidebarCollapsed(localStorage.getItem("textosphereSearchCollapsed") === "1");
 setLeftSidebarCollapsed(localStorage.getItem("textosphereLeftSidebarCollapsed") === "1");
 renderNotifications();

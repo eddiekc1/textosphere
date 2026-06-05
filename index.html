@@ -1,10 +1,10 @@
 ﻿<!doctype html>
-<html lang="ja">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Textosphere</title>
-    <link rel="stylesheet" href="styles.css?v=20260602-search" />
+    <link rel="stylesheet" href="styles.css?v=20260605-notifications-3" />
   </head>
   <body>
     <section class="auth-shell" id="authShell" hidden>
@@ -14,42 +14,47 @@
           <div>
             <p class="eyebrow">Outer Space SNS</p>
             <h1>Textosphere</h1>
-            <p class="brand-info-statement">新たにつなげよう、点を線に。</p>
+            <p class="brand-info-statement" data-i18n="auth.brandStatement">Connect points into lines.</p>
             <p class="brand-info-subtitle">Where texts connect beyond time.</p>
           </div>
         </div>
+        <div class="locale-switch" role="group" aria-label="Language">
+          <span data-i18n="locale.label">Language</span>
+          <button class="locale-button" type="button" data-locale-choice="en" aria-pressed="true" data-i18n="locale.english">English</button>
+          <button class="locale-button" type="button" data-locale-choice="ja" aria-pressed="false" data-i18n="locale.japanese">Japanese</button>
+        </div>
         <div class="auth-grid">
           <section class="auth-panel">
-            <h2>ログイン</h2>
-            <label class="field"><span>メールアドレス / ユーザーID</span><input id="loginEmailInput" type="text" autocomplete="username" /></label>
-            <label class="field"><span>パスワード</span><input id="loginPasswordInput" type="password" autocomplete="off" value="" maxlength="25" /></label>
-            <button class="primary-button" id="loginButton" type="button">ログイン</button>
+            <h2 data-i18n="auth.loginTitle">Log in</h2>
+            <label class="field"><span data-i18n="auth.loginIdLabel">Email address / User ID</span><input id="loginEmailInput" type="text" autocomplete="username" /></label>
+            <label class="field"><span data-i18n="auth.passwordLabel">Password</span><input id="loginPasswordInput" type="password" autocomplete="off" value="" maxlength="25" /></label>
+            <button class="primary-button" id="loginButton" type="button" data-i18n="auth.loginButton">Log in</button>
           </section>
           <section class="auth-panel">
-            <h2>ユーザー作成</h2>
-            <label class="field"><span>メールアドレス</span><input id="signupEmailInput" type="email" autocomplete="email" /></label>
-            <label class="field"><span>ユーザー名</span><input id="signupUserNameInput" type="text" placeholder="表示名" maxlength="25" /></label>
-            <label class="field has-tooltip"><span>ユーザーID</span><input id="signupUserIdInput" type="text" autocomplete="off" value="" placeholder="半角英数、_、-" maxlength="25" aria-describedby="signupUserIdHint" title="半角英数字、_、- のみ。1〜25文字。ログインにも使います。" /><small class="field-tooltip" id="signupUserIdHint">半角英数字、_、- のみ。1〜25文字。ログインにも使います。</small></label>
-            <label class="field has-tooltip"><span>パスワード</span><input id="signupPasswordInput" type="password" autocomplete="new-password" maxlength="25" aria-describedby="signupPasswordHint" title="8〜25文字。半角英大文字・小文字・数字・記号（_ - ! # $ % ( ) [ ] @ + * ? /）のうち3種類以上を含めてください。" /><small class="field-tooltip" id="signupPasswordHint">8〜25文字。半角英大文字・小文字・数字・記号（_ - ! # $ % ( ) [ ] @ + * ? /）のうち3種類以上。</small></label>
-            <label class="field has-tooltip"><span>生年月日</span><input id="signupBirthDateInput" type="date" aria-describedby="signupBirthDateHint" title="この情報は公開されません" /><small class="field-tooltip" id="signupBirthDateHint">この情報は公開されません</small></label>
-            <label class="field"><span>プロフィールアイコン</span><input id="signupProfileIconInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" /></label>
-            <label class="field"><span>自己紹介文</span><textarea id="signupBioInput" rows="4" placeholder="自己紹介文" maxlength="4000"></textarea></label>
-            <button class="secondary-button" id="signupButton" type="button">ユーザーを作成</button>
+            <h2 data-i18n="auth.signupTitle">Create account</h2>
+            <label class="field"><span data-i18n="auth.emailLabel">Email address</span><input id="signupEmailInput" type="email" autocomplete="email" /></label>
+            <label class="field"><span data-i18n="auth.userNameLabel">Display name</span><input id="signupUserNameInput" type="text" placeholder="Display name" maxlength="25" data-i18n-placeholder="auth.userNamePlaceholder" /></label>
+            <label class="field has-tooltip"><span data-i18n="auth.userIdLabel">User ID</span><input id="signupUserIdInput" type="text" autocomplete="off" value="" placeholder="Letters, numbers, _, -" maxlength="25" aria-describedby="signupUserIdHint" title="Letters, numbers, _, and - only. 1-25 characters. You can use this to log in." data-i18n-placeholder="auth.userIdPlaceholder" data-i18n-title="auth.userIdHint" /><small class="field-tooltip" id="signupUserIdHint" data-i18n="auth.userIdHint">Letters, numbers, _, and - only. 1-25 characters. You can use this to log in.</small></label>
+            <label class="field has-tooltip"><span data-i18n="auth.passwordLabel">Password</span><input id="signupPasswordInput" type="password" autocomplete="new-password" maxlength="25" aria-describedby="signupPasswordHint" title="8-25 characters. Use at least 3 of these: uppercase letters, lowercase letters, numbers, symbols (_ - ! # $ % ( ) [ ] @ + * ? /)." data-i18n-title="auth.passwordHint" /><small class="field-tooltip" id="signupPasswordHint" data-i18n="auth.passwordHintShort">8-25 characters. Use at least 3 of these: uppercase letters, lowercase letters, numbers, symbols.</small></label>
+            <label class="field has-tooltip"><span data-i18n="auth.birthDateLabel">Birth date</span><input id="signupBirthDateInput" type="date" aria-describedby="signupBirthDateHint" title="This is not public." data-i18n-title="auth.birthDateHint" /><small class="field-tooltip" id="signupBirthDateHint" data-i18n="auth.birthDateHint">This is not public.</small></label>
+            <label class="field"><span data-i18n="auth.profileIconLabel">Profile icon</span><input id="signupProfileIconInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" /></label>
+            <label class="field"><span data-i18n="auth.bioLabel">Bio</span><textarea id="signupBioInput" rows="4" placeholder="Bio" maxlength="4000" data-i18n-placeholder="auth.bioPlaceholder"></textarea></label>
+            <button class="secondary-button" id="signupButton" type="button" data-i18n="auth.signupButton">Create account</button>
           </section>
         </div>
         <p class="auth-message" id="authMessage"></p>
       </div>
     </section>
     <div class="app-shell" id="appShell" hidden>
-      <button class="sidebar-toggle-button" id="sidebarToggleButton" type="button" aria-controls="leftSidebar" aria-expanded="true" aria-label="左サイドバーを隠す">メニュー</button>
-      <aside class="sidebar" id="leftSidebar" aria-label="投稿作成">
+      <button class="sidebar-toggle-button" id="sidebarToggleButton" type="button" aria-controls="leftSidebar" aria-expanded="true" aria-label="Hide sidebar" data-i18n="nav.menu" data-i18n-aria-label="nav.hideSidebar">Menu</button>
+      <aside class="sidebar" id="leftSidebar" aria-label="Create post" data-i18n-aria-label="composer.createPost">
         <header class="brand">
           <button class="brand-mark brand-info-button" id="brandInfoButton" type="button" aria-label="Textosphereについて開く" title="Textosphereについて"></button>
           <div>
             <p class="eyebrow">Outer Space SNS</p>
             <h1>Textosphere</h1>
           </div>
-          <button class="notification-trigger" id="notificationTriggerButton" type="button" aria-haspopup="dialog" aria-controls="notificationDialog">通知 <span id="notificationCount">0</span></button>
+          <button class="notification-trigger" id="notificationTriggerButton" type="button" aria-haspopup="dialog" aria-controls="notificationDialog"><span data-i18n="notification.trigger">Notifications</span> <span id="notificationCount">0</span></button>
         </header>
         <section class="panel user-panel">
           <button class="user-summary" id="userSummaryButton" type="button">
@@ -61,67 +66,67 @@
           </button>
         </section>
         <section class="panel node-list-panel">
-          <div class="panel-heading"><h2>光点一覧</h2><span id="nodeCount">0</span></div>
-          <div class="node-list-tabs" role="tablist" aria-label="光点一覧の表示切替">
-            <button class="node-list-tab is-active" id="ownNodeListTab" type="button" role="tab" aria-selected="true" data-node-list-mode="own">自分 <span id="ownNodeCount">0</span></button>
-            <button class="node-list-tab" id="followedNodeListTab" type="button" role="tab" aria-selected="false" data-node-list-mode="followed">フォロー <span id="followedNodeCount">0</span></button>
-            <button class="node-list-tab" id="favoriteNodeListTab" type="button" role="tab" aria-selected="false" data-node-list-mode="favorites">お気に入り <span id="favoriteNodeCount">0</span></button>
+          <div class="panel-heading"><h2 data-i18n="node.listTitle">Nodes</h2><span id="nodeCount">0</span></div>
+          <div class="node-list-tabs" role="tablist" aria-label="Node list view" data-i18n-aria-label="node.listTabs">
+            <button class="node-list-tab is-active" id="ownNodeListTab" type="button" role="tab" aria-selected="true" data-node-list-mode="own"><span data-i18n="common.own">Own</span> <span id="ownNodeCount">0</span></button>
+            <button class="node-list-tab" id="followedNodeListTab" type="button" role="tab" aria-selected="false" data-node-list-mode="followed"><span data-i18n="common.followingShort">Following</span> <span id="followedNodeCount">0</span></button>
+            <button class="node-list-tab" id="favoriteNodeListTab" type="button" role="tab" aria-selected="false" data-node-list-mode="favorites"><span data-i18n="common.favorites">Favorites</span> <span id="favoriteNodeCount">0</span></button>
           </div>
           <div class="node-list" id="nodeList"></div>
         </section>
-        <button class="panel-toggle" id="composerToggle" type="button" aria-expanded="false" aria-controls="composerPanel">新しい光点</button>
+        <button class="panel-toggle" id="composerToggle" type="button" aria-expanded="false" aria-controls="composerPanel" data-i18n="composer.newNode">New node</button>
         <section class="panel composer" id="composerPanel" hidden>
-          <div class="panel-heading"><h2>新しい光点</h2></div>
-          <label class="field"><span>クラスタ</span><select id="clusterInput"></select></label>
-          <label class="field"><span>タイプ</span><select id="typeInput"><option value="text">テキスト</option><option value="image">画像</option><option value="music">音楽</option><option value="video">映像</option><option value="relay">中継通信</option></select></label>
-          <label class="field"><span>タイトル</span><input id="titleInput" type="text" placeholder="記憶の断片、曲名、映像名" maxlength="300" /></label>
-          <label class="field field-text" id="textField"><span>本文</span><textarea id="bodyInput" rows="7" placeholder="本文を入力してください" maxlength="4000"></textarea></label>
-          <div class="field field-media is-hidden" id="mediaField"><span>ファイル</span><input id="mediaFileInput" type="file" accept="image/png,image/jpeg,image/gif,audio/mpeg,video/mp4,.png,.jpg,.jpeg,.gif,.mp3,.mp4" /><div class="media-drop-zone" id="mediaDropZone"><strong>ファイルをドロップ</strong><small id="mediaDropStatus">ここへファイルをドラッグ＆ドロップできます</small><button class="ghost-button" id="clearDroppedMediaButton" type="button" hidden>解除</button></div><div class="clipboard-image-panel is-hidden" id="clipboardImagePanel" tabindex="0"><div class="clipboard-image-copy"><strong>画像を貼り付け</strong><small id="clipboardImageStatus">ここをクリックして Ctrl+V で貼り付けできます</small></div><img id="clipboardImagePreview" alt="" hidden /><button class="ghost-button" id="clearClipboardImageButton" type="button" hidden>解除</button></div><div class="duration-field" id="durationField"><span>再生時間</span><div class="duration-grid"><input id="durationInput" type="number" min="10" max="900" value="180" /><span>秒</span></div></div></div>
-          <button class="primary-button" id="addButton" type="button">光点を追加</button>
+          <div class="panel-heading"><h2 data-i18n="composer.newNode">New node</h2></div>
+          <label class="field"><span data-i18n="cluster.type">Cluster</span><select id="clusterInput"></select></label>
+          <label class="field"><span data-i18n="node.type">Type</span><select id="typeInput"><option value="text" data-i18n="type.text">Text</option><option value="image" data-i18n="type.image">Image</option><option value="music" data-i18n="type.music">Music</option><option value="video" data-i18n="type.video">Video</option><option value="relay" data-i18n="type.relay">Relay</option></select></label>
+          <label class="field"><span data-i18n="node.title">Title</span><input id="titleInput" type="text" placeholder="A memory fragment, song title, video title" maxlength="300" data-i18n-placeholder="node.titlePlaceholder" /></label>
+          <label class="field field-text" id="textField"><span data-i18n="node.body">Body</span><textarea id="bodyInput" rows="7" placeholder="Enter body text" maxlength="4000" data-i18n-placeholder="node.bodyPlaceholder"></textarea></label>
+          <div class="field field-media is-hidden" id="mediaField"><span data-i18n="common.file">File</span><input id="mediaFileInput" type="file" accept="image/png,image/jpeg,image/gif,audio/mpeg,video/mp4,.png,.jpg,.jpeg,.gif,.mp3,.mp4" /><div class="media-drop-zone" id="mediaDropZone"><strong data-i18n="media.dropFile">Drop file</strong><small id="mediaDropStatus" data-i18n="media.dropAny">Drag and drop a file here</small><button class="ghost-button" id="clearDroppedMediaButton" type="button" hidden data-i18n="common.clear">Clear</button></div><div class="clipboard-image-panel is-hidden" id="clipboardImagePanel" tabindex="0"><div class="clipboard-image-copy"><strong data-i18n="media.pasteImage">Paste image</strong><small id="clipboardImageStatus" data-i18n="media.pasteHint">Click here and press Ctrl+V to paste</small></div><img id="clipboardImagePreview" alt="" hidden /><button class="ghost-button" id="clearClipboardImageButton" type="button" hidden data-i18n="common.clear">Clear</button></div><div class="duration-field" id="durationField"><span data-i18n="media.duration">Duration</span><div class="duration-grid"><input id="durationInput" type="number" min="10" max="900" value="180" /><span data-i18n="media.seconds">sec</span></div></div></div>
+          <button class="primary-button" id="addButton" type="button" data-i18n="composer.addNode">Add node</button>
         </section>
         <section class="panel cluster-list-panel">
-          <div class="panel-heading"><h2>クラスタ一覧</h2><span id="clusterCount">0</span></div>
-          <div class="cluster-list-tabs" role="tablist" aria-label="クラスタ一覧の表示切替">
-            <button class="cluster-list-tab is-active" id="ownClusterListTab" type="button" role="tab" aria-selected="true" data-cluster-list-mode="own">自分 <span id="ownClusterCount">0</span></button>
-            <button class="cluster-list-tab" id="followedClusterListTab" type="button" role="tab" aria-selected="false" data-cluster-list-mode="followed">フォロー中 <span id="followedClusterCount">0</span></button>
+          <div class="panel-heading"><h2 data-i18n="cluster.listTitle">Clusters</h2><span id="clusterCount">0</span></div>
+          <div class="cluster-list-tabs" role="tablist" aria-label="Cluster list view" data-i18n-aria-label="cluster.listTabs">
+            <button class="cluster-list-tab is-active" id="ownClusterListTab" type="button" role="tab" aria-selected="true" data-cluster-list-mode="own"><span data-i18n="common.own">Own</span> <span id="ownClusterCount">0</span></button>
+            <button class="cluster-list-tab" id="followedClusterListTab" type="button" role="tab" aria-selected="false" data-cluster-list-mode="followed"><span data-i18n="common.following">Following</span> <span id="followedClusterCount">0</span></button>
           </div>
           <div class="cluster-list" id="clusterList"></div>
         </section>
-        <button class="panel-toggle" id="clusterToggle" type="button" aria-expanded="false" aria-controls="clusterPanel">新しいクラスタ</button>
+        <button class="panel-toggle" id="clusterToggle" type="button" aria-expanded="false" aria-controls="clusterPanel" data-i18n="cluster.newCluster">New cluster</button>
         <section class="panel cluster-panel" id="clusterPanel" hidden>
-          <div class="panel-heading"><h2>新しいクラスタ</h2></div>
-          <label class="field"><span>クラスタ名</span><input id="clusterNameInput" type="text" placeholder="クラスタ名" maxlength="100" /></label>
-          <label class="field"><span>説明</span><textarea id="clusterDescriptionInput" rows="4" placeholder="説明を入力してください" maxlength="1000"></textarea></label>
-          <button class="primary-button" id="addClusterButton" type="button">クラスタを追加</button>
+          <div class="panel-heading"><h2 data-i18n="cluster.newCluster">New cluster</h2></div>
+          <label class="field"><span data-i18n="cluster.name">Cluster name</span><input id="clusterNameInput" type="text" placeholder="Cluster name" maxlength="100" data-i18n-placeholder="cluster.name" /></label>
+          <label class="field"><span data-i18n="cluster.description">Description</span><textarea id="clusterDescriptionInput" rows="4" placeholder="Enter a description" maxlength="1000" data-i18n-placeholder="cluster.descriptionPlaceholder"></textarea></label>
+          <button class="primary-button" id="addClusterButton" type="button" data-i18n="cluster.addCluster">Add cluster</button>
         </section>
       </aside>
-      <main class="universe" aria-label="情報の星図">
+      <main class="universe" aria-label="Information star map" data-i18n-aria-label="universe.aria">
         <canvas id="threadCanvas" aria-hidden="true"></canvas>
         <div class="home-toolbar">
-          <button class="home-button" id="homeButton" type="button" title="ホームへ移動">ホーム</button>
-          <button class="home-button home-save-button" id="saveHomeButton" type="button" title="この場所をホームにする">この場所をホームにする</button>
+          <button class="home-button" id="homeButton" type="button" title="Move to home" data-i18n="home.button" data-i18n-title="home.moveTitle">Home</button>
+          <button class="home-button home-save-button" id="saveHomeButton" type="button" title="Set this place as home" data-i18n="home.saveButton" data-i18n-title="home.saveTitle">Set home here</button>
         </div>
         <div class="map-toolbar">
-          <button class="mode-toggle-button" id="universeModeButton" type="button" title="探索モードに切り替え" aria-label="探索モードに切り替え">文脈</button>
+          <button class="mode-toggle-button" id="universeModeButton" type="button" title="Switch to explore mode" aria-label="Switch to explore mode">Context</button>
         </div>
         <div class="universe-scroll-edge universe-scroll-edge-left" aria-hidden="true"></div>
         <div class="universe-scroll-edge universe-scroll-edge-right" aria-hidden="true"></div>
         <div class="nodes-layer" id="nodesLayer"></div>
-        <section class="temporary-node-bin" id="temporaryNodeBin" aria-label="一時領域">
-          <div class="temporary-node-bin-head"><span>一時領域</span><strong id="temporaryNodeCount">0/5</strong></div>
+        <section class="temporary-node-bin" id="temporaryNodeBin" aria-label="Temporary area" data-i18n-aria-label="temporary.aria">
+          <div class="temporary-node-bin-head"><span data-i18n="temporary.title">Temporary</span><strong id="temporaryNodeCount">0/5</strong></div>
           <div class="temporary-node-list" id="temporaryNodeList"></div>
         </section>
         <div class="link-comment-tooltip" id="linkCommentTooltip" aria-hidden="true"></div>
       </main>
-      <aside class="search-sidebar" id="searchSidebar" aria-label="検索">
-        <button class="search-sidebar-toggle" id="searchSidebarToggle" type="button" aria-label="検索を隠す" title="検索を隠す">>></button>
+      <aside class="search-sidebar" id="searchSidebar" aria-label="Search" data-i18n-aria-label="search.title">
+        <button class="search-sidebar-toggle" id="searchSidebarToggle" type="button" aria-label="Hide search" title="Hide search">>></button>
         <section class="panel search-panel">
-          <div class="panel-heading"><h2>検索</h2><span id="searchResultCount">0</span></div>
-          <label class="field"><span>種別</span><select id="searchTypeInput"><option value="all">すべて</option><option value="text">テキスト</option><option value="image">画像</option><option value="music">音楽</option><option value="video">映像</option><option value="relay">中継通信</option><option value="user">ユーザー</option><option value="cluster">クラスタ</option></select></label>
-          <label class="field"><span>ワード</span><input id="searchWordInput" type="search" placeholder="タイトル・本文・ユーザー名・自己紹介・クラスタ名・クラスタ説明" /></label>
+          <div class="panel-heading"><h2 data-i18n="search.title">Search</h2><span id="searchResultCount">0</span></div>
+          <label class="field"><span data-i18n="search.kind">Kind</span><select id="searchTypeInput"><option value="all" data-i18n="common.all">All</option><option value="text" data-i18n="type.text">Text</option><option value="image" data-i18n="type.image">Image</option><option value="music" data-i18n="type.music">Music</option><option value="video" data-i18n="type.video">Video</option><option value="relay" data-i18n="type.relay">Relay</option><option value="user" data-i18n="profile.type">User</option><option value="cluster" data-i18n="cluster.type">Cluster</option></select></label>
+          <label class="field"><span data-i18n="search.word">Word</span><input id="searchWordInput" type="search" placeholder="Title, body, user name, bio, cluster name, cluster description" data-i18n-placeholder="search.wordPlaceholder" /></label>
           <div class="search-sort-grid">
-            <label class="field"><span>並べ替え</span><select id="searchSortInput"><option value="createdAt">登録日時</option><option value="likeCount">Like数</option><option value="connectionCount">接続ノード数</option></select></label>
-            <label class="field"><span>順序</span><select id="searchOrderInput"><option value="desc">降順</option><option value="asc">昇順</option></select></label>
+            <label class="field"><span data-i18n="search.sort">Sort</span><select id="searchSortInput"><option value="createdAt" data-i18n="search.createdAt">Created at</option><option value="likeCount" data-i18n="search.likeCount">Likes</option><option value="connectionCount" data-i18n="search.connectionCount">Connections</option></select></label>
+            <label class="field"><span data-i18n="search.order">Order</span><select id="searchOrderInput"><option value="desc" data-i18n="search.desc">Descending</option><option value="asc" data-i18n="search.asc">Ascending</option></select></label>
           </div>
           <div class="search-results" id="searchResults"></div>
         </section>
@@ -139,7 +144,7 @@
           <div>
             <p class="eyebrow">Outer Space SNS</p>
             <h2 id="brandInfoTitle">Textosphere</h2>
-            <p class="brand-info-statement">新たにつなげよう、点を線に。</p>
+            <p class="brand-info-statement" data-i18n="auth.brandStatement">Connect points into lines.</p>
             <p class="brand-info-subtitle">Where texts connect beyond time.</p>
           </div>
         </div>
@@ -326,15 +331,15 @@ Textosphere プライバシーポリシー
         </div>
       </div>
     </dialog>
-    <dialog class="detail-dialog" id="detailDialog"><div class="dialog-shell"><button class="close-button" id="closeDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="detailType"></div><h2 id="detailTitle"></h2><div class="detail-content" id="detailContent"></div></div></dialog>
-    <dialog class="share-dialog" id="shareDialog"><div class="share-shell"><button class="close-button" id="closeShareDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type">共有</div><h2 id="shareDialogTitle"></h2><div class="share-dialog-content" id="shareDialogContent"></div></div></dialog>
-    <dialog class="relay-dialog" id="relayDialog"><div class="relay-shell"><button class="close-button" id="closeRelayDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type">中継通信</div><h2 id="relayDialogTitle"></h2><div class="relay-dialog-content" id="relayDialogContent"></div></div></dialog>
-    <dialog class="connection-dialog" id="connectionDialog"><div class="connection-shell"><button class="close-button" id="closeConnectionDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="connectionType">接続</div><h2 id="connectionTitle">光点を接続</h2><p class="connection-summary" id="connectionSummary"></p><label class="field"><span>コメント</span><textarea id="connectionCommentInput" rows="4" maxlength="2000" placeholder="接続にコメントを付ける"></textarea></label><div class="connection-actions"><button class="secondary-button" id="cancelConnectionButton" type="button">キャンセル</button><button class="danger-button" id="disconnectConnectionButton" type="button" hidden>接続を切る</button><button class="primary-button" id="confirmConnectionButton" type="button">線で繋ぐ</button></div></div></dialog>
-    <dialog class="profile-dialog" id="profileDialog"><div class="profile-shell"><button class="close-button" id="closeProfileDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type">ユーザー</div><h2>プロフィール編集</h2><label class="field"><span>ユーザー名</span><input id="profileUserNameInput" type="text" placeholder="表示名" maxlength="25" /></label><label class="field has-tooltip"><span>ユーザーID</span><input id="profileUserIdInput" type="text" autocomplete="off" maxlength="25" aria-describedby="profileUserIdHint" title="半角英数字、_、- のみ。1〜25文字。ログインにも使います。" /><small class="field-tooltip" id="profileUserIdHint">半角英数字、_、- のみ。1〜25文字。ログインにも使います。</small></label><label class="field has-tooltip"><span>パスワード</span><input id="profilePasswordInput" type="password" autocomplete="new-password" placeholder="変更する場合のみ入力" maxlength="25" aria-describedby="profilePasswordHint" title="空欄なら変更しません。変更する場合は8〜25文字で、半角英大文字・小文字・数字・記号（_ - ! # $ % ( ) [ ] @ + * ? /）のうち3種類以上を含めてください。" /><small class="field-tooltip" id="profilePasswordHint">空欄なら変更しません。変更する場合は8〜25文字で、半角英大文字・小文字・数字・記号（_ - ! # $ % ( ) [ ] @ + * ? /）のうち3種類以上。</small></label><label class="field"><span>生年月日</span><input id="profileBirthDateInput" type="date" /></label><label class="field"><span>プロフィールアイコン</span><input id="profileIconInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" /></label><label class="field"><span>自己紹介文</span><textarea id="profileBioInput" rows="5" placeholder="自己紹介文" maxlength="4000"></textarea></label><p class="profile-message" id="profileMessage"></p><div class="profile-actions"><button class="secondary-button" id="cancelProfileButton" type="button">キャンセル</button><button class="primary-button" id="saveProfileButton" type="button">保存</button></div></div></dialog>
-    <dialog class="user-detail-dialog" id="userDetailDialog"><div class="user-detail-shell"><button class="close-button" id="closeUserDetailDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="user-detail-content" id="userDetailContent"></div></div></dialog>
-    <dialog class="cluster-nodes-dialog" id="clusterNodesDialog"><div class="cluster-nodes-shell"><button class="close-button" id="closeClusterNodesDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="clusterNodesType">クラスタ</div><h2 id="clusterNodesTitle"></h2><p class="cluster-nodes-meta" id="clusterNodesMeta"></p><div class="cluster-nodes-actions" id="clusterNodesActions"></div><div class="cluster-nodes-content" id="clusterNodesContent"></div></div></dialog>
-    <dialog class="notification-dialog" id="notificationDialog"><div class="notification-shell"><button class="close-button" id="closeNotificationDialogButton" type="button" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="notification-dialog-head"><div><div class="detail-type">通知</div><h2>通知一覧</h2></div><button class="ghost-button" id="markNotificationsReadButton" type="button">すべて既読</button></div><div class="notification-list" id="notificationList"></div></div></dialog>
-    <dialog class="processing-dialog" id="nodeProcessingDialog" aria-labelledby="nodeProcessingTitle" aria-describedby="nodeProcessingMessage"><div class="processing-shell"><div class="processing-spinner" aria-hidden="true"></div><div><h2 id="nodeProcessingTitle">光点を追加しています</h2><p id="nodeProcessingMessage">アップロードと保存を処理中です。画面を閉じずにお待ちください。</p></div></div></dialog>
+    <dialog class="detail-dialog" id="detailDialog"><div class="dialog-shell"><button class="close-button" id="closeDialogButton" type="button" aria-label="Close" data-i18n-aria-label="common.close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="detailType"></div><h2 id="detailTitle"></h2><div class="detail-content" id="detailContent"></div></div></dialog>
+    <dialog class="share-dialog" id="shareDialog"><div class="share-shell"><button class="close-button" id="closeShareDialogButton" type="button" aria-label="Close" data-i18n-aria-label="common.close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" data-i18n="share.title">Share</div><h2 id="shareDialogTitle"></h2><div class="share-dialog-content" id="shareDialogContent"></div></div></dialog>
+    <dialog class="relay-dialog" id="relayDialog"><div class="relay-shell"><button class="close-button" id="closeRelayDialogButton" type="button" aria-label="Close" data-i18n-aria-label="common.close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" data-i18n="type.relay">Relay</div><h2 id="relayDialogTitle"></h2><div class="relay-dialog-content" id="relayDialogContent"></div></div></dialog>
+    <dialog class="connection-dialog" id="connectionDialog"><div class="connection-shell"><button class="close-button" id="closeConnectionDialogButton" type="button" aria-label="Close" data-i18n-aria-label="common.close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="connectionType" data-i18n="connection.type">Connection</div><h2 id="connectionTitle" data-i18n="connection.connectTitle">Connect nodes</h2><p class="connection-summary" id="connectionSummary"></p><label class="field"><span data-i18n="connection.comment">Comment</span><textarea id="connectionCommentInput" rows="4" maxlength="2000" placeholder="Add a comment to this connection" data-i18n-placeholder="connection.commentPlaceholder"></textarea></label><div class="connection-actions"><button class="secondary-button" id="cancelConnectionButton" type="button" data-i18n="common.cancel">Cancel</button><button class="danger-button" id="disconnectConnectionButton" type="button" hidden data-i18n="connection.disconnect">Disconnect</button><button class="primary-button" id="confirmConnectionButton" type="button" data-i18n="connection.connectButton">Connect</button></div></div></dialog>
+    <dialog class="profile-dialog" id="profileDialog"><div class="profile-shell"><button class="close-button" id="closeProfileDialogButton" type="button" aria-label="Close" data-i18n-aria-label="common.close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" data-i18n="profile.type">User</div><h2 data-i18n="profile.title">Edit profile</h2><div class="locale-switch locale-switch-compact" role="group" aria-label="Language"><span data-i18n="locale.label">Language</span><button class="locale-button" type="button" data-locale-choice="en" aria-pressed="true" data-i18n="locale.english">English</button><button class="locale-button" type="button" data-locale-choice="ja" aria-pressed="false" data-i18n="locale.japanese">Japanese</button></div><label class="field"><span data-i18n="auth.userNameLabel">Display name</span><input id="profileUserNameInput" type="text" placeholder="Display name" maxlength="25" data-i18n-placeholder="auth.userNamePlaceholder" /></label><label class="field has-tooltip"><span data-i18n="auth.userIdLabel">User ID</span><input id="profileUserIdInput" type="text" autocomplete="off" maxlength="25" aria-describedby="profileUserIdHint" title="Letters, numbers, _, and - only. 1-25 characters. You can use this to log in." data-i18n-title="auth.userIdHint" /><small class="field-tooltip" id="profileUserIdHint" data-i18n="auth.userIdHint">Letters, numbers, _, and - only. 1-25 characters. You can use this to log in.</small></label><label class="field has-tooltip"><span data-i18n="auth.passwordLabel">Password</span><input id="profilePasswordInput" type="password" autocomplete="new-password" placeholder="Leave blank to keep current password" maxlength="25" aria-describedby="profilePasswordHint" title="Leave blank to keep current password. To change it, use 8-25 characters and at least 3 of these: uppercase letters, lowercase letters, numbers, symbols (_ - ! # $ % ( ) [ ] @ + * ? /)." data-i18n-placeholder="profile.passwordPlaceholder" data-i18n-title="profile.passwordHint" /><small class="field-tooltip" id="profilePasswordHint" data-i18n="profile.passwordHintShort">Leave blank to keep current password. To change it, use 8-25 characters and at least 3 character types.</small></label><label class="field"><span data-i18n="auth.birthDateLabel">Birth date</span><input id="profileBirthDateInput" type="date" /></label><label class="field"><span data-i18n="auth.profileIconLabel">Profile icon</span><input id="profileIconInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" /></label><label class="field"><span data-i18n="auth.bioLabel">Bio</span><textarea id="profileBioInput" rows="5" placeholder="Bio" maxlength="4000" data-i18n-placeholder="auth.bioPlaceholder"></textarea></label><p class="profile-message" id="profileMessage"></p><div class="profile-actions"><button class="secondary-button" id="cancelProfileButton" type="button" data-i18n="common.cancel">Cancel</button><button class="primary-button" id="saveProfileButton" type="button" data-i18n="common.save">Save</button></div></div></dialog>
+    <dialog class="user-detail-dialog" id="userDetailDialog"><div class="user-detail-shell"><button class="close-button" id="closeUserDetailDialogButton" type="button" aria-label="Close" data-i18n-aria-label="common.close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="user-detail-content" id="userDetailContent"></div></div></dialog>
+    <dialog class="cluster-nodes-dialog" id="clusterNodesDialog"><div class="cluster-nodes-shell"><button class="close-button" id="closeClusterNodesDialogButton" type="button" aria-label="Close" data-i18n-aria-label="common.close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="detail-type" id="clusterNodesType" data-i18n="cluster.type">Cluster</div><h2 id="clusterNodesTitle"></h2><p class="cluster-nodes-meta" id="clusterNodesMeta"></p><div class="cluster-nodes-actions" id="clusterNodesActions"></div><div class="cluster-nodes-content" id="clusterNodesContent"></div></div></dialog>
+    <dialog class="notification-dialog" id="notificationDialog"><div class="notification-shell"><button class="close-button" id="closeNotificationDialogButton" type="button" aria-label="Close" data-i18n-aria-label="common.close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button><div class="notification-dialog-head"><div><div class="detail-type" data-i18n="notification.trigger">Notifications</div><h2 data-i18n="notification.listTitle">Notifications</h2></div><button class="ghost-button" id="markNotificationsReadButton" type="button" data-i18n="notification.markAllRead">Mark all read</button></div><div class="notification-list" id="notificationList"></div></div></dialog>
+    <dialog class="processing-dialog" id="nodeProcessingDialog" aria-labelledby="nodeProcessingTitle" aria-describedby="nodeProcessingMessage"><div class="processing-shell"><div class="processing-spinner" aria-hidden="true"></div><div><h2 id="nodeProcessingTitle" data-i18n="processing.addingNode">Adding node</h2><p id="nodeProcessingMessage" data-i18n="processing.uploadSave">Uploading and saving. Please keep this screen open.</p></div></div></dialog>
     <script src="app.js?v=20260602-search"></script>
   </body>
 </html>
