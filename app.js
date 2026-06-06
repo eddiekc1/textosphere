@@ -733,6 +733,8 @@ const SEARCH_RESULT_PAGE_SIZE = 20;
 const TEMPORARY_NODE_LIMIT = 5;
 const MIN_UNIVERSE_ZOOM = 0.45;
 const MAX_UNIVERSE_ZOOM = 2.6;
+const VIEWPORT_CULL_PADDING = 260;
+const IOS_CANVAS_DPR_CAP = 1.5;
 const STATE_REFRESH_MS = 30_000;
 const NOTIFICATION_REFRESH_MS = 30_000;
 const RELAY_REFRESH_MS = 5_000;
@@ -782,6 +784,9 @@ const RELAY_MESSAGE_COLORS = [
 const RELAY_REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🎉"];
 const CONNECTION_DROP_BASE_THRESHOLD = 96;
 const CONNECTION_DROP_MIN_THRESHOLD = 36;
+const IS_IOS =
+  /iPad|iPhone|iPod/i.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
 function createClientId() {
   if (typeof globalThis.crypto?.randomUUID === "function") {
@@ -943,6 +948,8 @@ let nodeDragBounds = { ...DEFAULT_NODE_DRAG_BOUNDS };
 let currentHomeLocation = null;
 let lastMapSize = null;
 let viewportPositionedNodeIds = new Set();
+let universeRenderFrame = null;
+let pendingUniverseRender = { nodes: false, links: false };
 let stateRefreshTimer = null;
 let stateRefreshInFlight = false;
 let notificationRefreshTimer = null;
@@ -2312,6 +2319,30 @@ function getMapRect() {
   return nodesLayer.getBoundingClientRect();
 }
 
+function getCanvasPixelRatio() {
+  const ratio = window.devicePixelRatio || 1;
+  return IS_IOS ? Math.min(ratio, IOS_CANVAS_DPR_CAP) : ratio;
+}
+
+function scheduleUniverseRender({ nodes: shouldRenderNodes = true, links: shouldDrawLinks = true } = {}) {
+  pendingUniverseRender.nodes = pendingUniverseRender.nodes || shouldRenderNodes;
+  pendingUniverseRender.links = pendingUniverseRender.links || shouldDrawLinks;
+  if (universeRenderFrame !== null) return;
+
+  universeRenderFrame = requestAnimationFrame(() => {
+    universeRenderFrame = null;
+    const renderNodesNow = pendingUniverseRender.nodes;
+    const drawLinksNow = pendingUniverseRender.links;
+    pendingUniverseRender = { nodes: false, links: false };
+    if (renderNodesNow) {
+      renderNodes();
+    }
+    if (drawLinksNow) {
+      drawLinks();
+    }
+  });
+}
+
 function coordToWorld(value) {
   return Number(value) * UNIVERSE_COORD_UNIT_PX;
 }
@@ -2479,7 +2510,7 @@ function resizeCanvas() {
     };
   }
   lastMapSize = { width, height };
-  const scale = window.devicePixelRatio || 1;
+  const scale = getCanvasPixelRatio();
   canvas.width = Math.floor(width * scale);
   canvas.height = Math.floor(height * scale);
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
@@ -2616,6 +2647,32 @@ function getNodePoint(node) {
   return {
     x: worldPoint.x * universeZoom + universePan.x,
     y: worldPoint.y * universeZoom + universePan.y,
+  };
+}
+
+function getViewportCullRect(rect = getMapRect(), padding = VIEWPORT_CULL_PADDING) {
+  return {
+    left: -padding,
+    top: -padding,
+    right: rect.width + padding,
+    bottom: rect.height + padding,
+  };
+}
+
+function isPointInCullRect(point, cullRect) {
+  return point.x >= cullRect.left && point.x <= cullRect.right && point.y >= cullRect.top && point.y <= cullRect.bottom;
+}
+
+function isBoundsInCullRect(bounds, cullRect) {
+  return bounds.right >= cullRect.left && bounds.left <= cullRect.right && bounds.bottom >= cullRect.top && bounds.top <= cullRect.bottom;
+}
+
+function getCurveBounds(from, controlFrom, controlTo, to) {
+  return {
+    left: Math.min(from.x, controlFrom.x, controlTo.x, to.x),
+    right: Math.max(from.x, controlFrom.x, controlTo.x, to.x),
+    top: Math.min(from.y, controlFrom.y, controlTo.y, to.y),
+    bottom: Math.max(from.y, controlFrom.y, controlTo.y, to.y),
   };
 }
 
@@ -2831,6 +2888,8 @@ function drawExplorationArea(rect = getMapRect()) {
 
 function drawLinks() {
   const rect = getMapRect();
+  const cullRect = getViewportCullRect(rect);
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
   ctx.clearRect(0, 0, rect.width, rect.height);
   ctx.lineCap = "round";
   ctx.textBaseline = "middle";
@@ -2842,22 +2901,24 @@ function drawLinks() {
   const displayLayerContext = createNodeDisplayLayerContext();
 
   links.forEach((link) => {
-    const source = nodes.find((node) => node.id === link.source);
-    const target = nodes.find((node) => node.id === link.target);
+    const source = nodeById.get(link.source);
+    const target = nodeById.get(link.target);
     if (!source || !target) return;
     if (getNodeDisplayLayer(source, displayLayerContext) === "background" || getNodeDisplayLayer(target, displayLayerContext) === "background") return;
 
     const from = getNodePoint(source);
     const to = getNodePoint(target);
+    const bend = Math.min(90, Math.hypot(to.x - from.x, to.y - from.y) * 0.22);
+    const controlFrom = { x: from.x + bend, y: from.y - bend };
+    const controlTo = { x: to.x - bend, y: to.y + bend };
+    if (!isBoundsInCullRect(getCurveBounds(from, controlFrom, controlTo, to), cullRect)) return;
+
     const gradient = ctx.createLinearGradient(from.x, from.y, to.x, to.y);
     gradient.addColorStop(0, `${typeMeta[source.type].color}cc`);
     gradient.addColorStop(1, `${typeMeta[target.type].color}cc`);
 
     ctx.beginPath();
     ctx.moveTo(from.x, from.y);
-    const bend = Math.min(90, Math.hypot(to.x - from.x, to.y - from.y) * 0.22);
-    const controlFrom = { x: from.x + bend, y: from.y - bend };
-    const controlTo = { x: to.x - bend, y: to.y + bend };
     ctx.bezierCurveTo(controlFrom.x, controlFrom.y, controlTo.x, controlTo.y, to.x, to.y);
     ctx.strokeStyle = gradient;
     ctx.lineWidth = Math.max(0.8, 1.4 * clamp(universeZoom, 0.6, 2.2));
@@ -2927,12 +2988,15 @@ function isNewNodeHighlighted(id) {
 
 function renderNodes() {
   nodesLayer.innerHTML = "";
+  const rect = getMapRect();
+  const cullRect = getViewportCullRect(rect);
   const displayLayerContext = createNodeDisplayLayerContext();
 
   nodes.forEach((node) => {
     const displayLayer = getNodeDisplayLayer(node, displayLayerContext);
     const layerStyle = NODE_DISPLAY_LAYERS[displayLayer] || NODE_DISPLAY_LAYERS.background;
     const point = getNodePoint(node);
+    if (!isPointInCullRect(point, cullRect)) return;
     const isExplore = isExplorationMode();
     const isInExplorationArea = displayLayer === "background" && isExplore && isPointInExplorationArea(point);
     const isOutsideExplorationArea = isExplore && !isPointInExplorationArea(point);
@@ -3257,7 +3321,7 @@ function setNodePosition(id, x, y, button) {
       button.style.top = `${point.y}px`;
     }
   }
-  drawLinks();
+  scheduleUniverseRender({ nodes: false, links: true });
 }
 
 function updateSelectedNodeClass(id) {
@@ -3298,8 +3362,7 @@ function moveUniversePan(event) {
     x: activeUniversePan.startPanX + event.clientX - activeUniversePan.startClientX,
     y: activeUniversePan.startPanY + event.clientY - activeUniversePan.startClientY,
   };
-  renderNodes();
-  drawLinks();
+  scheduleUniverseRender();
 }
 
 function finishUniversePan(event) {
@@ -3410,8 +3473,7 @@ function moveUniversePinch(event) {
     x: metrics.centerX - activeUniversePinch.worldCenterX * universeZoom,
     y: metrics.centerY - activeUniversePinch.worldCenterY * universeZoom,
   };
-  renderNodes();
-  drawLinks();
+  scheduleUniverseRender();
 }
 
 function finishUniversePointer(event) {
@@ -3441,8 +3503,7 @@ function handleUniverseWheel(event) {
     x: pointerX - worldX * universeZoom,
     y: pointerY - worldY * universeZoom,
   };
-  renderNodes();
-  drawLinks();
+  scheduleUniverseRender();
 }
 
 function startNodeDrag(event, id, button) {
