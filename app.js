@@ -787,6 +787,7 @@ const CONNECTION_DROP_MIN_THRESHOLD = 36;
 const IS_IOS =
   /iPad|iPhone|iPod/i.test(navigator.userAgent) ||
   (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+document.documentElement.classList.toggle("is-ios", IS_IOS);
 
 function createClientId() {
   if (typeof globalThis.crypto?.randomUUID === "function") {
