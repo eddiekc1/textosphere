@@ -735,6 +735,8 @@ const MIN_UNIVERSE_ZOOM = 0.45;
 const MAX_UNIVERSE_ZOOM = 2.6;
 const VIEWPORT_CULL_PADDING = 260;
 const IOS_CANVAS_DPR_CAP = 1.5;
+const IOS_NODE_DOUBLE_TAP_MS = 420;
+const IOS_NODE_DOUBLE_TAP_DISTANCE = 28;
 const STATE_REFRESH_MS = 30_000;
 const NOTIFICATION_REFRESH_MS = 30_000;
 const RELAY_REFRESH_MS = 5_000;
@@ -949,6 +951,7 @@ let nodeDragBounds = { ...DEFAULT_NODE_DRAG_BOUNDS };
 let currentHomeLocation = null;
 let lastMapSize = null;
 let viewportPositionedNodeIds = new Set();
+let lastNodeTouchTap = null;
 let universeRenderFrame = null;
 let pendingUniverseRender = { nodes: false, links: false };
 let stateRefreshTimer = null;
@@ -2987,6 +2990,35 @@ function isNewNodeHighlighted(id) {
   return false;
 }
 
+function handleNodeTouchDoubleTap(event, id) {
+  if (!IS_IOS || event.pointerType !== "touch" || suppressNodeClick || activeUniversePinch) return;
+  const node = nodes.find((item) => item.id === id);
+  if (!node || !canOpenNodeInUniverse(node, getNodePoint(node))) {
+    lastNodeTouchTap = null;
+    return;
+  }
+
+  const now = performance.now();
+  const previous = lastNodeTouchTap;
+  lastNodeTouchTap = {
+    id,
+    time: now,
+    clientX: event.clientX,
+    clientY: event.clientY,
+  };
+
+  if (!previous || previous.id !== id || now - previous.time > IOS_NODE_DOUBLE_TAP_MS) return;
+  const distance = Math.hypot(event.clientX - previous.clientX, event.clientY - previous.clientY);
+  if (distance > IOS_NODE_DOUBLE_TAP_DISTANCE) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+  lastNodeTouchTap = null;
+  selectedNodeId = id;
+  updateSelectedNodeClass(id);
+  openDetail(id);
+}
+
 function renderNodes() {
   nodesLayer.innerHTML = "";
   const rect = getMapRect();
@@ -3026,7 +3058,10 @@ function renderNodes() {
     `;
     button.addEventListener("pointerdown", (event) => startNodeDrag(event, node.id, button));
     button.addEventListener("pointermove", moveNodeDrag);
-    button.addEventListener("pointerup", finishNodeDrag);
+    button.addEventListener("pointerup", (event) => {
+      finishNodeDrag(event);
+      handleNodeTouchDoubleTap(event, node.id);
+    });
     button.addEventListener("pointercancel", cancelNodeDrag);
     button.addEventListener("click", (event) => {
       if (suppressNodeClick) {
