@@ -24,3 +24,12 @@ jobs:
           remote_host: ${{ secrets.SSH_HOST }}
           remote_user: ${{ secrets.SSH_USER }}
           remote_key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      # 3. ssh でサービス再起動
+      - name: Restart Service with SSH
+        uses: D3rHase/ssh-command-action@v0.3.1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          user: ${{ secrets.SSH_USER }}
+          private_key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command: sudo systemctl restart textosphere
