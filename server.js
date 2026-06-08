@@ -674,7 +674,7 @@ function parseSelection(value) {
   }
 }
 
-function storeProfileIconFile(file) {
+function prepareProfileIconUpload(file, userId) {
   if (!file) return null;
   if (file.buffer.length > maxUploadBytes) {
     throw createHttpError(413, "Upload file is too large");
@@ -690,14 +690,18 @@ function storeProfileIconFile(file) {
     throw error;
   }
 
-  const safeExtension =
-    extension || (file.mimetype === "image/gif" ? ".gif" : file.mimetype === "image/jpeg" ? ".jpg" : ".png");
-  const storedName = `${crypto.randomUUID()}${safeExtension}`;
-  const mediaPath = path.join(uploadDir, storedName);
-  fs.writeFileSync(mediaPath, file.buffer);
+  const safeMime = ["image/png", "image/jpeg", "image/gif"].includes(file.mimetype)
+    ? file.mimetype
+    : extension === ".gif"
+      ? "image/gif"
+      : extension === ".jpg" || extension === ".jpeg"
+        ? "image/jpeg"
+        : "image/png";
   return {
-    mediaPath,
-    profileIcon: `/uploads/${storedName}`,
+    data: file.buffer,
+    mime: safeMime,
+    name: file.originalname,
+    profileIcon: `/api/users/${encodeURIComponent(userId)}/profile-icon`,
   };
 }
 
@@ -756,6 +760,11 @@ function unlinkUploadedFile(url) {
   if (filePath) {
     fs.unlink(filePath, () => {});
   }
+}
+
+function getProfileIconContentType(row) {
+  const iconMime = String(row.icon_mime || "").toLowerCase();
+  return ["image/png", "image/jpeg", "image/gif"].includes(iconMime) ? iconMime : "image/png";
 }
 
 function getNodeMediaApiUrl(nodeId) {
@@ -1627,6 +1636,16 @@ async function initDb() {
 
   await pool.query("alter table users add column if not exists display_name text not null default ''");
   await pool.query("update users set display_name = user_identifier where display_name = ''");
+  await pool.query(`
+    create table if not exists user_profile_icons (
+      user_id uuid primary key references users(id) on delete cascade,
+      data bytea not null,
+      icon_mime text not null,
+      icon_name text not null default '',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `);
 
   await pool.query(`
     create table if not exists sessions (
@@ -2237,6 +2256,49 @@ app.get("/api/share-link-preview", async (req, res, next) => {
   }
 });
 
+app.get("/api/users/:id/profile-icon", async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `
+        select users.id,
+               user_profile_icons.data as icon_data,
+               user_profile_icons.icon_mime,
+               user_profile_icons.icon_name
+        from users
+        join user_profile_icons on user_profile_icons.user_id = users.id
+        where users.id = $1
+      `,
+      [req.params.id],
+    );
+    const user = rows[0];
+    if (!user) {
+      res.sendStatus(404);
+      return;
+    }
+
+    const iconBuffer = Buffer.isBuffer(user.icon_data) ? user.icon_data : Buffer.from(user.icon_data);
+    if (iconBuffer.length === 0) {
+      res.sendStatus(404);
+      return;
+    }
+
+    const headers = {
+      "Cache-Control": "public, max-age=31536000, immutable",
+      "Content-Length": String(iconBuffer.length),
+      "Content-Type": getProfileIconContentType(user),
+    };
+    const fileName = String(user.icon_name || "").replace(/[\r\n"]/g, "").trim();
+    if (fileName) {
+      headers["Content-Disposition"] = `inline; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+    }
+
+    res.set(headers);
+    res.end(iconBuffer);
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/nodes/:id/media", async (req, res, next) => {
   try {
     const { rows } = await pool.query(
@@ -2337,7 +2399,6 @@ async function requireAuth(req, res, next) {
 }
 
 app.post("/api/auth/register", parseMultipartForm, async (req, res, next) => {
-  let mediaPath = null;
   try {
     const email = String(req.body.email || "").trim().toLowerCase();
     const password = String(req.body.password || "");
@@ -2371,31 +2432,53 @@ app.post("/api/auth/register", parseMultipartForm, async (req, res, next) => {
       res.status(400).json({ error: "Invalid password" });
       return;
     }
+    const newUserUuid = crypto.randomUUID();
+    let profileUpload = null;
     if (req.file) {
-      const storedIcon = storeProfileIconFile(req.file);
-      mediaPath = storedIcon.mediaPath;
-      profileIcon = storedIcon.profileIcon;
+      profileUpload = prepareProfileIconUpload(req.file, newUserUuid);
+      profileIcon = profileUpload.profileIcon;
     }
 
     const { salt, hash } = hashPassword(password);
     const { rows } = await pool.query(
       `
-        insert into users
-          (id, email, password_hash, password_salt, user_identifier, display_name, role, login_allowed, birth_date, profile_icon, bio)
-        values
-          ($1, $2, $3, $4, $5, $6, 3, true, $7, $8, $9)
-        returning *
+        with inserted_user as (
+          insert into users
+            (id, email, password_hash, password_salt, user_identifier, display_name, role, login_allowed, birth_date, profile_icon, bio)
+          values
+            ($1, $2, $3, $4, $5, $6, 3, true, $7, $8, $9)
+          returning *
+        ),
+        inserted_icon as (
+          insert into user_profile_icons (user_id, data, icon_mime, icon_name)
+          select inserted_user.id, $10::bytea, $11, $12
+          from inserted_user
+          where $10::bytea is not null
+          returning user_id
+        )
+        select *
+        from inserted_user
       `,
-      [crypto.randomUUID(), email, hash, salt, userId, userName || userId, birthDate || null, profileIcon, bio],
+      [
+        newUserUuid,
+        email,
+        hash,
+        salt,
+        userId,
+        userName || userId,
+        birthDate || null,
+        profileIcon,
+        bio,
+        profileUpload?.data || null,
+        profileUpload?.mime || "",
+        profileUpload?.name || "",
+      ],
     );
     await ensureUserPublicCluster(rows[0].id);
     const token = crypto.randomBytes(32).toString("hex");
     await pool.query("insert into sessions (token_hash, user_id) values ($1, $2)", [hashToken(token), rows[0].id]);
     res.status(201).json({ token, user: toUser(rows[0]) });
   } catch (error) {
-    if (mediaPath) {
-      fs.rmSync(mediaPath, { force: true });
-    }
     if (error.statusCode) {
       res.status(error.statusCode).json({ error: error.message });
       return;
@@ -2440,7 +2523,6 @@ app.get("/api/auth/me", requireAuth, async (req, res) => {
 });
 
 app.patch("/api/auth/me", requireAuth, parseMultipartForm, async (req, res, next) => {
-  let mediaPath = null;
   try {
     const userId = String(req.body.userId || "").trim();
     const userName = String(req.body.userName || "").trim();
@@ -2469,26 +2551,42 @@ app.patch("/api/auth/me", requireAuth, parseMultipartForm, async (req, res, next
       res.status(400).json({ error: "Invalid password" });
       return;
     }
+    let profileUpload = null;
     if (req.file) {
-      const storedIcon = storeProfileIconFile(req.file);
-      mediaPath = storedIcon.mediaPath;
-      profileIcon = storedIcon.profileIcon;
+      profileUpload = prepareProfileIconUpload(req.file, req.user.id);
+      profileIcon = profileUpload.profileIcon;
     }
 
     const passwordValues = password ? hashPassword(password) : null;
     const { rows } = await pool.query(
       `
-        update users
-        set user_identifier = $2,
-            password_hash = coalesce($3, password_hash),
-            password_salt = coalesce($4, password_salt),
-            birth_date = $5,
-            profile_icon = $6,
-            bio = $7,
-            display_name = $8,
-            updated_at = now()
-        where id = $1
-        returning *
+        with updated_user as (
+          update users
+          set user_identifier = $2,
+              password_hash = coalesce($3, password_hash),
+              password_salt = coalesce($4, password_salt),
+              birth_date = $5,
+              profile_icon = $6,
+              bio = $7,
+              display_name = $8,
+              updated_at = now()
+          where id = $1
+          returning *
+        ),
+        upserted_icon as (
+          insert into user_profile_icons (user_id, data, icon_mime, icon_name)
+          select updated_user.id, $9::bytea, $10, $11
+          from updated_user
+          where $9::bytea is not null
+          on conflict (user_id) do update
+          set data = excluded.data,
+              icon_mime = excluded.icon_mime,
+              icon_name = excluded.icon_name,
+              updated_at = now()
+          returning user_id
+        )
+        select *
+        from updated_user
       `,
       [
         req.user.id,
@@ -2499,14 +2597,14 @@ app.patch("/api/auth/me", requireAuth, parseMultipartForm, async (req, res, next
         profileIcon,
         bio,
         userName || userId,
+        profileUpload?.data || null,
+        profileUpload?.mime || "",
+        profileUpload?.name || "",
       ],
     );
 
     res.json({ user: toUser(rows[0]) });
   } catch (error) {
-    if (mediaPath) {
-      fs.rmSync(mediaPath, { force: true });
-    }
     if (error.statusCode) {
       res.status(error.statusCode).json({ error: error.message });
       return;
