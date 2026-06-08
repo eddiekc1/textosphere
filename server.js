@@ -758,6 +758,50 @@ function unlinkUploadedFile(url) {
   }
 }
 
+function getNodeMediaApiUrl(nodeId) {
+  return `/api/nodes/${encodeURIComponent(nodeId)}/media`;
+}
+
+function getNodeMediaContentType(row) {
+  const mediaMime = String(row.media_mime || "").toLowerCase();
+  if (row.type === "image" && ["image/png", "image/jpeg", "image/gif"].includes(mediaMime)) return mediaMime;
+  if (row.type === "music" && ["audio/mpeg", "audio/mp3"].includes(mediaMime)) return mediaMime;
+  if (row.type === "video" && mediaMime === "video/mp4") return mediaMime;
+  if (row.type === "image") return "image/png";
+  if (row.type === "music") return "audio/mpeg";
+  if (row.type === "video") return "video/mp4";
+  return "application/octet-stream";
+}
+
+function parseByteRange(rangeHeader, totalBytes) {
+  const match = String(rangeHeader || "").match(/^bytes=(\d*)-(\d*)$/);
+  if (!match) return null;
+
+  const [, rawStart, rawEnd] = match;
+  if (!rawStart && !rawEnd) return null;
+
+  let start;
+  let end;
+  if (!rawStart) {
+    const suffixLength = Number(rawEnd);
+    if (!Number.isInteger(suffixLength) || suffixLength <= 0) return null;
+    start = Math.max(totalBytes - suffixLength, 0);
+    end = totalBytes - 1;
+  } else {
+    start = Number(rawStart);
+    end = rawEnd ? Number(rawEnd) : totalBytes - 1;
+  }
+
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || start >= totalBytes) {
+    return null;
+  }
+
+  return {
+    start,
+    end: Math.min(end, totalBytes - 1),
+  };
+}
+
 function runMediaTool(command, args, timeoutMs = 10 * 60 * 1000) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { windowsHide: true });
@@ -1689,6 +1733,14 @@ async function initDb() {
   await pool.query("alter table nodes alter column x type numeric(10, 2)");
   await pool.query("alter table nodes alter column y type numeric(10, 2)");
   await pool.query(`
+    create table if not exists node_media (
+      node_id uuid primary key references nodes(id) on delete cascade,
+      data bytea not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `);
+  await pool.query(`
     create table if not exists universe_settings (
       id boolean primary key default true check (id),
       expansion_stage integer not null default 0,
@@ -2180,6 +2232,75 @@ app.get("/api/share-link-preview", async (req, res, next) => {
       return;
     }
     res.json(preview);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/nodes/:id/media", async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `
+        select nodes.id,
+               nodes.type,
+               nodes.media_mime,
+               nodes.media_name,
+               node_media.data as media_data
+        from nodes
+        join node_media on node_media.node_id = nodes.id
+        where nodes.id = $1
+      `,
+      [req.params.id],
+    );
+    const node = rows[0];
+    if (!node) {
+      res.sendStatus(404);
+      return;
+    }
+
+    const mediaBuffer = Buffer.isBuffer(node.media_data) ? node.media_data : Buffer.from(node.media_data);
+    if (mediaBuffer.length === 0) {
+      res.sendStatus(404);
+      return;
+    }
+
+    const contentType = getNodeMediaContentType(node);
+    const baseHeaders = {
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "public, max-age=31536000, immutable",
+      "Content-Type": contentType,
+    };
+    const fileName = String(node.media_name || "").replace(/[\r\n"]/g, "").trim();
+    if (fileName) {
+      baseHeaders["Content-Disposition"] = `inline; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+    }
+
+    if (req.headers.range) {
+      const range = parseByteRange(req.headers.range, mediaBuffer.length);
+      if (!range) {
+        res.status(416).set({
+          ...baseHeaders,
+          "Content-Range": `bytes */${mediaBuffer.length}`,
+        });
+        res.end();
+        return;
+      }
+
+      const chunk = mediaBuffer.subarray(range.start, range.end + 1);
+      res.status(206).set({
+        ...baseHeaders,
+        "Content-Length": String(chunk.length),
+        "Content-Range": `bytes ${range.start}-${range.end}/${mediaBuffer.length}`,
+      });
+      res.end(chunk);
+      return;
+    }
+
+    res.set({
+      ...baseHeaders,
+      "Content-Length": String(mediaBuffer.length),
+    });
+    res.end(mediaBuffer);
   } catch (error) {
     next(error);
   }
@@ -3557,9 +3678,11 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
       return;
     }
 
+    const nodeId = crypto.randomUUID();
     let mediaUrl = null;
     let mediaMime = null;
     let mediaName = null;
+    let mediaData = null;
     if (req.file) {
       const extension = path.extname(req.file.originalname).toLowerCase();
       const validMusic =
@@ -3593,14 +3716,14 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
         await compressVideoToLow480p(tempMediaPath, mediaPath);
         fs.unlinkSync(tempMediaPath);
         tempMediaPath = null;
-        mediaUrl = `/uploads/${storedName}`;
+        mediaData = fs.readFileSync(mediaPath);
+        fs.unlinkSync(mediaPath);
+        mediaPath = null;
+        mediaUrl = getNodeMediaApiUrl(nodeId);
         mediaMime = "video/mp4";
       } else {
-        const safeExtension = extension || (type === "image" ? ".png" : ".mp3");
-        const storedName = `${crypto.randomUUID()}${safeExtension}`;
-        mediaPath = path.join(uploadDir, storedName);
-        fs.writeFileSync(mediaPath, req.file.buffer);
-        mediaUrl = `/uploads/${storedName}`;
+        mediaData = req.file.buffer;
+        mediaUrl = getNodeMediaApiUrl(nodeId);
         mediaMime = req.file.mimetype;
       }
       mediaName = req.file.originalname;
@@ -3617,15 +3740,25 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
     ]);
     const safeClusterId = clusterRows[0]?.id || userPublicCluster.id;
     const clusterDescription = clusterRows[0]?.description || userPublicCluster.description || "";
-    const nodeId = crypto.randomUUID();
 
     const { rows } = await pool.query(
       `
-        insert into nodes
-          (id, owner_user_id, cluster_id, type, title, body, duration, selection_start, selection_end, media_url, media_mime, media_name, x, y)
-        values
-          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-        returning *
+        with inserted_node as (
+          insert into nodes
+            (id, owner_user_id, cluster_id, type, title, body, duration, selection_start, selection_end, media_url, media_mime, media_name, x, y)
+          values
+            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          returning *
+        ),
+        inserted_media as (
+          insert into node_media (node_id, data)
+          select inserted_node.id, $15::bytea
+          from inserted_node
+          where $15::bytea is not null
+          returning node_id
+        )
+        select *
+        from inserted_node
       `,
       [
         nodeId,
@@ -3642,6 +3775,7 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
         mediaName,
         clamp(Number(x), nodeDragBounds.minX, nodeDragBounds.maxX),
         clamp(Number(y), nodeDragBounds.minY, nodeDragBounds.maxY),
+        mediaData,
       ],
     );
     const assignments = await classifyNodeMegaClusters({
