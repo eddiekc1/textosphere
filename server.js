@@ -74,6 +74,15 @@ const maxUploadBytes = 30 * 1024 * 1024;
 const maxVideoUploadBytes = 80 * 1024 * 1024;
 const ffmpegPath = process.env.FFMPEG_PATH || "ffmpeg";
 const ffprobePath = process.env.FFPROBE_PATH || "ffprobe";
+const corsAllowedOrigins = new Set(
+  String(process.env.CORS_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+);
+const imageUploadMaxWidth = 1280;
+const imageUploadMaxHeight = 720;
+const maxImageNodeUploadFiles = 10;
 const linkPreviewTimeoutMs = 4000;
 const linkPreviewMaxBytes = 1024 * 1024;
 const linkPreviewMaxRedirects = 3;
@@ -574,6 +583,7 @@ function parseContentDisposition(value) {
 function parseMultipartBuffer(buffer, boundary) {
   const fields = {};
   let file = null;
+  const files = [];
   const boundaryBuffer = Buffer.from(`--${boundary}`);
   const nextBoundaryBuffer = Buffer.from(`\r\n--${boundary}`);
   const headerBreakBuffer = Buffer.from("\r\n\r\n");
@@ -606,11 +616,14 @@ function parseMultipartBuffer(buffer, boundary) {
     if (!disposition.name) return;
 
     if (disposition.filename) {
-      file = {
+      const uploadedFile = {
+        fieldname: disposition.name,
         originalname: path.basename(disposition.filename),
         mimetype: headers["content-type"] || "application/octet-stream",
         buffer: content,
       };
+      if (!file) file = uploadedFile;
+      files.push(uploadedFile);
       boundaryIndex = nextBoundaryIndex + 2;
       continue;
     }
@@ -619,7 +632,7 @@ function parseMultipartBuffer(buffer, boundary) {
     boundaryIndex = nextBoundaryIndex + 2;
   }
 
-  return { fields, file };
+  return { fields, file, files };
 }
 
 function parseMultipartForm(req, res, next) {
@@ -654,9 +667,10 @@ function parseMultipartForm(req, res, next) {
       return;
     }
     try {
-      const { fields, file } = parseMultipartBuffer(Buffer.concat(chunks), boundaryMatch[1] || boundaryMatch[2]);
+      const { fields, file, files } = parseMultipartBuffer(Buffer.concat(chunks), boundaryMatch[1] || boundaryMatch[2]);
       req.body = fields;
       req.file = file;
+      req.files = files;
       next();
     } catch (error) {
       next(error);
@@ -674,61 +688,108 @@ function parseSelection(value) {
   }
 }
 
-function prepareProfileIconUpload(file, userId) {
-  if (!file) return null;
-  if (file.buffer.length > maxUploadBytes) {
-    throw createHttpError(413, "Upload file is too large");
-  }
-
+function isValidUploadedImage(file) {
   const extension = path.extname(file.originalname).toLowerCase();
-  const validImage =
+  return (
     ["image/png", "image/jpeg", "image/gif"].includes(file.mimetype) ||
-    [".png", ".jpg", ".jpeg", ".gif"].includes(extension);
-  if (!validImage) {
-    const error = new Error("Profile icon requires PNG/JPG/GIF");
-    error.statusCode = 400;
-    throw error;
-  }
+    [".png", ".jpg", ".jpeg", ".gif"].includes(extension)
+  );
+}
 
-  const safeMime = ["image/png", "image/jpeg", "image/gif"].includes(file.mimetype)
+function getSafeUploadedImageMime(file) {
+  const extension = path.extname(file.originalname).toLowerCase();
+  return ["image/png", "image/jpeg", "image/gif"].includes(file.mimetype)
     ? file.mimetype
     : extension === ".gif"
       ? "image/gif"
       : extension === ".jpg" || extension === ".jpeg"
         ? "image/jpeg"
         : "image/png";
-  return {
+}
+
+function isServerCompressibleImage(file) {
+  return ["image/png", "image/jpeg"].includes(getSafeUploadedImageMime(file));
+}
+
+function getCompressedImageName(fileName) {
+  const baseName = path.basename(String(fileName || "image"), path.extname(String(fileName || ""))).trim() || "image";
+  return `${baseName}.jpg`;
+}
+
+async function prepareImageUploadForStorage(file) {
+  const safeMime = getSafeUploadedImageMime(file);
+  const originalUpload = {
     data: file.buffer,
     mime: safeMime,
     name: file.originalname,
+  };
+  if (!isServerCompressibleImage(file)) return originalUpload;
+
+  const fileId = crypto.randomUUID();
+  const extension = path.extname(file.originalname).toLowerCase() || (safeMime === "image/jpeg" ? ".jpg" : ".png");
+  const inputPath = path.join(uploadDir, `${fileId}-source${extension}`);
+  const outputPath = path.join(uploadDir, `${fileId}.jpg`);
+  try {
+    fs.writeFileSync(inputPath, file.buffer);
+    const dimensions = await probeImageDimensions(inputPath);
+    if (dimensions.width <= imageUploadMaxWidth && dimensions.height <= imageUploadMaxHeight) {
+      return originalUpload;
+    }
+
+    await compressImageToJpeg720p(inputPath, outputPath);
+    return {
+      data: fs.readFileSync(outputPath),
+      mime: "image/jpeg",
+      name: getCompressedImageName(file.originalname),
+    };
+  } finally {
+    fs.unlink(inputPath, () => {});
+    fs.unlink(outputPath, () => {});
+  }
+}
+
+async function prepareProfileIconUpload(file, userId) {
+  if (!file) return null;
+  if (file.buffer.length > maxUploadBytes) {
+    throw createHttpError(413, "Upload file is too large");
+  }
+
+  if (!isValidUploadedImage(file)) {
+    const error = new Error("Profile icon requires PNG/JPG/GIF");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const imageUpload = await prepareImageUploadForStorage(file);
+  return {
+    data: imageUpload.data,
+    mime: imageUpload.mime,
+    name: imageUpload.name,
     profileIcon: `/api/users/${encodeURIComponent(userId)}/profile-icon`,
   };
 }
 
-function storeRelayImageFile(file) {
+async function storeRelayImageFile(file) {
   if (!file) return null;
   if (file.buffer.length > maxUploadBytes) {
     throw createHttpError(413, "Upload file is too large");
   }
 
   const extension = path.extname(file.originalname).toLowerCase();
-  const validImage =
-    ["image/png", "image/jpeg", "image/gif"].includes(file.mimetype) ||
-    [".png", ".jpg", ".jpeg", ".gif"].includes(extension);
-  if (!validImage) {
+  if (!isValidUploadedImage(file)) {
     throw createHttpError(400, "Message image requires PNG/JPG/GIF");
   }
 
-  const safeExtension =
-    extension || (file.mimetype === "image/gif" ? ".gif" : file.mimetype === "image/jpeg" ? ".jpg" : ".png");
+  const imageUpload = await prepareImageUploadForStorage(file);
+  const safeExtension = path.extname(imageUpload.name).toLowerCase() || extension || ".jpg";
   const storedName = `${crypto.randomUUID()}${safeExtension}`;
   const mediaPath = path.join(uploadDir, storedName);
-  fs.writeFileSync(mediaPath, file.buffer);
+  fs.writeFileSync(mediaPath, imageUpload.data);
   return {
     mediaPath,
     imageUrl: `/uploads/${storedName}`,
-    imageMime: file.mimetype,
-    imageName: file.originalname,
+    imageMime: imageUpload.mime,
+    imageName: imageUpload.name,
   };
 }
 
@@ -771,6 +832,12 @@ function getNodeMediaApiUrl(nodeId) {
   return `/api/nodes/${encodeURIComponent(nodeId)}/media`;
 }
 
+function getNodeMediaItemApiUrl(nodeId, position = 0) {
+  return position > 0
+    ? `/api/nodes/${encodeURIComponent(nodeId)}/media/${encodeURIComponent(position)}`
+    : getNodeMediaApiUrl(nodeId);
+}
+
 function getNodeMediaContentType(row) {
   const mediaMime = String(row.media_mime || "").toLowerCase();
   if (row.type === "image" && ["image/png", "image/jpeg", "image/gif"].includes(mediaMime)) return mediaMime;
@@ -780,6 +847,60 @@ function getNodeMediaContentType(row) {
   if (row.type === "music") return "audio/mpeg";
   if (row.type === "video") return "video/mp4";
   return "application/octet-stream";
+}
+
+function parseNodeMediaItems(row) {
+  const rawItems = Array.isArray(row.media_items)
+    ? row.media_items
+    : typeof row.media_items === "string"
+      ? JSON.parse(row.media_items || "[]")
+      : [];
+  const items = rawItems
+    .filter(Boolean)
+    .map((item, index) => ({
+      url: item.url || getNodeMediaItemApiUrl(row.id, Number(item.position ?? index)),
+      mime: item.mime || row.media_mime || null,
+      name: item.name || row.media_name || null,
+      position: Number(item.position ?? index),
+    }))
+    .sort((a, b) => a.position - b.position);
+  if (items.length > 0) return items;
+  return row.media_url
+    ? [
+        {
+          url: row.media_url,
+          mime: row.media_mime || null,
+          name: row.media_name || null,
+          position: 0,
+        },
+      ]
+    : [];
+}
+
+function getNodeMediaItemsSelectSql(nodeReference = "nodes") {
+  return `
+    coalesce(
+      (
+        select json_agg(
+          json_build_object(
+            'url',
+            case
+              when node_media.position > 0
+                then '/api/nodes/' || ${nodeReference}.id::text || '/media/' || node_media.position::text
+              else '/api/nodes/' || ${nodeReference}.id::text || '/media'
+            end,
+            'mime', coalesce(nullif(node_media.media_mime, ''), ${nodeReference}.media_mime),
+            'name', coalesce(nullif(node_media.media_name, ''), ${nodeReference}.media_name),
+            'position', node_media.position
+          )
+          order by node_media.position asc
+        )
+        from node_media
+        where node_media.node_id = ${nodeReference}.id
+      ),
+      '[]'::json
+    ) as media_items
+  `;
 }
 
 function parseByteRange(rangeHeader, totalBytes) {
@@ -811,13 +932,13 @@ function parseByteRange(rangeHeader, totalBytes) {
   };
 }
 
-function runMediaTool(command, args, timeoutMs = 10 * 60 * 1000) {
+function runMediaTool(command, args, timeoutMs = 10 * 60 * 1000, taskName = "Media processing") {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { windowsHide: true });
     let stderr = "";
     const timeout = setTimeout(() => {
       child.kill("SIGKILL");
-      reject(createHttpError(500, "Video compression timed out"));
+      reject(createHttpError(500, `${taskName} timed out`));
     }, timeoutMs);
 
     child.stderr.on("data", (chunk) => {
@@ -833,9 +954,89 @@ function runMediaTool(command, args, timeoutMs = 10 * 60 * 1000) {
         resolve();
         return;
       }
-      reject(createHttpError(500, `Video compression failed${stderr ? `: ${stderr}` : ""}`));
+      reject(createHttpError(500, `${taskName} failed${stderr ? `: ${stderr}` : ""}`));
     });
   });
+}
+
+function runMediaToolForOutput(command, args, timeoutMs = 60 * 1000, taskName = "Media inspection") {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(createHttpError(500, `${taskName} timed out`));
+    }, timeoutMs);
+
+    child.stdout.on("data", (chunk) => {
+      stdout = `${stdout}${chunk.toString()}`.slice(-4000);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr = `${stderr}${chunk.toString()}`.slice(-4000);
+    });
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(createHttpError(500, `${path.basename(command)} failed to start: ${error.message}`));
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      if (code === 0) {
+        resolve(stdout);
+        return;
+      }
+      reject(createHttpError(500, `${taskName} failed${stderr ? `: ${stderr}` : ""}`));
+    });
+  });
+}
+
+async function probeImageDimensions(inputPath) {
+  const output = await runMediaToolForOutput(
+    ffprobePath,
+    [
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=width,height",
+      "-of",
+      "csv=s=x:p=0",
+      inputPath,
+    ],
+    60 * 1000,
+    "Image inspection",
+  );
+  const [width, height] = output.trim().split("x").map(Number);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw createHttpError(400, "Image could not be read");
+  }
+  return { width, height };
+}
+
+async function compressImageToJpeg720p(inputPath, outputPath) {
+  await runMediaTool(
+    ffmpegPath,
+    [
+      "-y",
+      "-i",
+      inputPath,
+      "-frames:v",
+      "1",
+      "-vf",
+      `scale=${imageUploadMaxWidth}:${imageUploadMaxHeight}:force_original_aspect_ratio=decrease:flags=lanczos,format=rgb24`,
+      "-q:v",
+      "4",
+      outputPath,
+    ],
+    60 * 1000,
+    "Image compression",
+  );
+
+  const stat = fs.statSync(outputPath);
+  if (stat.size <= 0) {
+    throw createHttpError(500, "Image compression produced an empty file");
+  }
 }
 
 async function compressVideoToLow480p(inputPath, outputPath) {
@@ -849,7 +1050,7 @@ async function compressVideoToLow480p(inputPath, outputPath) {
     "-of",
     "csv=p=0",
     inputPath,
-  ], 60 * 1000);
+  ], 60 * 1000, "Video inspection");
 
   await runMediaTool(ffmpegPath, [
     "-y",
@@ -876,7 +1077,7 @@ async function compressVideoToLow480p(inputPath, outputPath) {
     "-movflags",
     "+faststart",
     outputPath,
-  ]);
+  ], 10 * 60 * 1000, "Video compression");
 
   const stat = fs.statSync(outputPath);
   if (stat.size <= 0) {
@@ -885,6 +1086,7 @@ async function compressVideoToLow480p(inputPath, outputPath) {
 }
 
 function toNode(row) {
+  const mediaItems = parseNodeMediaItems(row);
   return {
     id: row.id,
     ownerUserId: row.owner_user_id,
@@ -893,9 +1095,10 @@ function toNode(row) {
     title: row.title,
     body: row.body || "",
     duration: row.duration,
-    mediaUrl: row.media_url,
-    mediaMime: row.media_mime,
-    mediaName: row.media_name,
+    mediaUrl: mediaItems[0]?.url || row.media_url,
+    mediaMime: mediaItems[0]?.mime || row.media_mime,
+    mediaName: mediaItems[0]?.name || row.media_name,
+    mediaItems,
     shareEnabled: row.share_enabled !== false,
     likeCount: Number(row.like_count || 0),
     likedByCurrentUser: Boolean(row.liked_by_current_user),
@@ -1184,7 +1387,8 @@ async function getNodeWithOwner(nodeId) {
       select nodes.*,
              users.user_identifier as owner_user_identifier,
              users.display_name as owner_display_name,
-             users.profile_icon as owner_profile_icon
+             users.profile_icon as owner_profile_icon,
+             ${getNodeMediaItemsSelectSql("nodes")}
       from nodes
       left join users on users.id = nodes.owner_user_id
       where nodes.id = $1
@@ -1239,7 +1443,8 @@ async function getSharePayload(token) {
         select nodes.*,
                users.user_identifier as owner_user_identifier,
                users.display_name as owner_display_name,
-               users.profile_icon as owner_profile_icon
+               users.profile_icon as owner_profile_icon,
+               ${getNodeMediaItemsSelectSql("nodes")}
         from nodes
         left join users on users.id = nodes.owner_user_id
         where nodes.id = any($1::uuid[])
@@ -1551,6 +1756,7 @@ async function getNodeForResponse(nodeId, userId = null) {
              relay_sessions.id as relay_session_id,
              relay_sessions.status as relay_status,
              relay_participants.user_id as relay_participant_user_id,
+             ${getNodeMediaItemsSelectSql("nodes")},
              coalesce(array_agg(node_mega_clusters.mega_cluster_id order by node_mega_clusters.score desc, node_mega_clusters.mega_cluster_id)
                filter (where node_mega_clusters.mega_cluster_id is not null), '{}') as mega_cluster_ids
       from nodes
@@ -1753,11 +1959,46 @@ async function initDb() {
   await pool.query("alter table nodes alter column y type numeric(10, 2)");
   await pool.query(`
     create table if not exists node_media (
-      node_id uuid primary key references nodes(id) on delete cascade,
+      node_id uuid not null references nodes(id) on delete cascade,
+      position integer not null default 0,
+      media_mime text not null default '',
+      media_name text not null default '',
       data bytea not null,
       created_at timestamptz not null default now(),
-      updated_at timestamptz not null default now()
+      updated_at timestamptz not null default now(),
+      primary key (node_id, position)
     )
+  `);
+  await pool.query("alter table node_media add column if not exists position integer not null default 0");
+  await pool.query("alter table node_media add column if not exists media_mime text not null default ''");
+  await pool.query("alter table node_media add column if not exists media_name text not null default ''");
+  await pool.query(`
+    update node_media
+    set media_mime = coalesce(nullif(node_media.media_mime, ''), nodes.media_mime, ''),
+        media_name = coalesce(nullif(node_media.media_name, ''), nodes.media_name, '')
+    from nodes
+    where nodes.id = node_media.node_id
+  `);
+  await pool.query(`
+    do $$
+    begin
+      if exists (
+        select 1
+        from pg_constraint
+        where conrelid = 'node_media'::regclass
+          and conname = 'node_media_pkey'
+      ) then
+        alter table node_media drop constraint node_media_pkey;
+      end if;
+      if not exists (
+        select 1
+        from pg_constraint
+        where conrelid = 'node_media'::regclass
+          and conname = 'node_media_node_position_pkey'
+      ) then
+        alter table node_media add constraint node_media_node_position_pkey primary key (node_id, position);
+      end if;
+    end $$;
   `);
   await pool.query(`
     create table if not exists universe_settings (
@@ -2192,7 +2433,11 @@ async function maybeExpandUniverse() {
 app.use(setSecurityHeaders);
 app.use(express.json());
 app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const origin = req.headers.origin;
+  if (origin && corsAllowedOrigins.has(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") {
@@ -2299,20 +2544,21 @@ app.get("/api/users/:id/profile-icon", async (req, res, next) => {
   }
 });
 
-app.get("/api/nodes/:id/media", async (req, res, next) => {
+async function sendNodeMedia(req, res, next, position = 0) {
   try {
     const { rows } = await pool.query(
       `
         select nodes.id,
                nodes.type,
-               nodes.media_mime,
-               nodes.media_name,
+               coalesce(nullif(node_media.media_mime, ''), nodes.media_mime) as media_mime,
+               coalesce(nullif(node_media.media_name, ''), nodes.media_name) as media_name,
                node_media.data as media_data
         from nodes
         join node_media on node_media.node_id = nodes.id
         where nodes.id = $1
+          and node_media.position = $2
       `,
-      [req.params.id],
+      [req.params.id, position],
     );
     const node = rows[0];
     if (!node) {
@@ -2366,6 +2612,19 @@ app.get("/api/nodes/:id/media", async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+}
+
+app.get("/api/nodes/:id/media", async (req, res, next) => {
+  await sendNodeMedia(req, res, next, 0);
+});
+
+app.get("/api/nodes/:id/media/:position", async (req, res, next) => {
+  const position = Number(req.params.position);
+  if (!Number.isInteger(position) || position < 0 || position >= maxImageNodeUploadFiles) {
+    res.status(404).json({ error: "Media not found" });
+    return;
+  }
+  await sendNodeMedia(req, res, next, position);
 });
 
 async function requireAuth(req, res, next) {
@@ -2435,7 +2694,7 @@ app.post("/api/auth/register", parseMultipartForm, async (req, res, next) => {
     const newUserUuid = crypto.randomUUID();
     let profileUpload = null;
     if (req.file) {
-      profileUpload = prepareProfileIconUpload(req.file, newUserUuid);
+      profileUpload = await prepareProfileIconUpload(req.file, newUserUuid);
       profileIcon = profileUpload.profileIcon;
     }
 
@@ -2553,7 +2812,7 @@ app.patch("/api/auth/me", requireAuth, parseMultipartForm, async (req, res, next
     }
     let profileUpload = null;
     if (req.file) {
-      profileUpload = prepareProfileIconUpload(req.file, req.user.id);
+      profileUpload = await prepareProfileIconUpload(req.file, req.user.id);
       profileIcon = profileUpload.profileIcon;
     }
 
@@ -2655,6 +2914,7 @@ app.get("/api/state", requireAuth, async (req, res, next) => {
                  relay_sessions.id as relay_session_id,
                  relay_sessions.status as relay_status,
                  relay_participants.user_id as relay_participant_user_id,
+                 ${getNodeMediaItemsSelectSql("nodes")},
                  coalesce(array_agg(node_mega_clusters.mega_cluster_id order by node_mega_clusters.score desc, node_mega_clusters.mega_cluster_id)
                    filter (where node_mega_clusters.mega_cluster_id is not null), '{}') as mega_cluster_ids
           from nodes
@@ -3596,7 +3856,7 @@ app.post("/api/nodes/:id/relay/messages", requireAuth, parseMultipartForm, async
       sendTextLimitError(res, "Message", inputLimits.longText);
       return;
     }
-    const storedImage = req.file ? storeRelayImageFile(req.file) : null;
+    const storedImage = req.file ? await storeRelayImageFile(req.file) : null;
     mediaPath = storedImage?.mediaPath || null;
     if (!body && !storedImage) {
       res.status(400).json({ error: "Message body or image is required" });
@@ -3771,8 +4031,18 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
       return;
     }
 
-    if (req.file && (type === "text" || type === "relay")) {
+    const uploadedFiles = Array.isArray(req.files) ? req.files : req.file ? [req.file] : [];
+    const mediaFiles = type === "image" ? uploadedFiles : req.file ? [req.file] : [];
+    if (uploadedFiles.length > 0 && (type === "text" || type === "relay")) {
       res.status(400).json({ error: "Text and relay nodes cannot include media files" });
+      return;
+    }
+    if (type !== "image" && uploadedFiles.length > 1) {
+      res.status(400).json({ error: "Only image nodes can include multiple media files" });
+      return;
+    }
+    if (type === "image" && mediaFiles.length > maxImageNodeUploadFiles) {
+      res.status(400).json({ error: `Image nodes can include up to ${maxImageNodeUploadFiles} files` });
       return;
     }
 
@@ -3780,28 +4050,33 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
     let mediaUrl = null;
     let mediaMime = null;
     let mediaName = null;
-    let mediaData = null;
-    if (req.file) {
-      const extension = path.extname(req.file.originalname).toLowerCase();
+    const mediaRows = [];
+    if (mediaFiles.length > 0) {
+      const firstFile = mediaFiles[0];
+      const extension = path.extname(firstFile.originalname).toLowerCase();
       const validMusic =
         type === "music" &&
-        (["audio/mpeg", "audio/mp3"].includes(req.file.mimetype) || extension === ".mp3");
-      const validVideo = type === "video" && (req.file.mimetype === "video/mp4" || extension === ".mp4");
-      const validImage =
-        type === "image" &&
-        (["image/png", "image/jpeg", "image/gif"].includes(req.file.mimetype) ||
-          [".png", ".jpg", ".jpeg", ".gif"].includes(extension));
-      if (!validImage && !validMusic && !validVideo) {
-        res.status(400).json({ error: "Image requires PNG/JPG/GIF, music requires MP3, and video requires MP4" });
-        return;
-      }
-      if (type !== "video" && req.file.buffer.length > maxUploadBytes) {
-        res.status(413).json({ error: "Upload file is too large" });
-        return;
-      }
-      if (type === "video" && req.file.buffer.length > maxVideoUploadBytes) {
-        res.status(413).json({ error: "Upload file is too large" });
-        return;
+        (["audio/mpeg", "audio/mp3"].includes(firstFile.mimetype) || extension === ".mp3");
+      const validVideo = type === "video" && (firstFile.mimetype === "video/mp4" || extension === ".mp4");
+
+      for (const file of mediaFiles) {
+        const fileExtension = path.extname(file.originalname).toLowerCase();
+        const validImage =
+          type === "image" &&
+          (["image/png", "image/jpeg", "image/gif"].includes(file.mimetype) ||
+            [".png", ".jpg", ".jpeg", ".gif"].includes(fileExtension));
+        if (!validImage && !validMusic && !validVideo) {
+          res.status(400).json({ error: "Image requires PNG/JPG/GIF, music requires MP3, and video requires MP4" });
+          return;
+        }
+        if (type !== "video" && file.buffer.length > maxUploadBytes) {
+          res.status(413).json({ error: "Upload file is too large" });
+          return;
+        }
+        if (type === "video" && file.buffer.length > maxVideoUploadBytes) {
+          res.status(413).json({ error: "Upload file is too large" });
+          return;
+        }
       }
 
       if (type === "video") {
@@ -3810,21 +4085,39 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
         const storedName = `${fileId}.mp4`;
         tempMediaPath = path.join(uploadDir, tempName);
         mediaPath = path.join(uploadDir, storedName);
-        fs.writeFileSync(tempMediaPath, req.file.buffer);
+        fs.writeFileSync(tempMediaPath, firstFile.buffer);
         await compressVideoToLow480p(tempMediaPath, mediaPath);
         fs.unlinkSync(tempMediaPath);
         tempMediaPath = null;
-        mediaData = fs.readFileSync(mediaPath);
+        const mediaData = fs.readFileSync(mediaPath);
         fs.unlinkSync(mediaPath);
         mediaPath = null;
         mediaUrl = getNodeMediaApiUrl(nodeId);
         mediaMime = "video/mp4";
+        mediaName = firstFile.originalname;
+        mediaRows.push({ position: 0, data: mediaData, mime: mediaMime, name: mediaName });
+      } else if (type === "image") {
+        for (const [index, file] of mediaFiles.entries()) {
+          const imageUpload = await prepareImageUploadForStorage(file);
+          mediaRows.push({
+            position: index,
+            data: imageUpload.data,
+            mime: imageUpload.mime,
+            name: imageUpload.name,
+          });
+        }
+        if (mediaRows.length > 0) {
+          mediaUrl = getNodeMediaApiUrl(nodeId);
+          mediaMime = mediaRows[0].mime;
+          mediaName = mediaRows[0].name;
+        }
       } else {
-        mediaData = req.file.buffer;
+        const mediaData = firstFile.buffer;
         mediaUrl = getNodeMediaApiUrl(nodeId);
-        mediaMime = req.file.mimetype;
+        mediaMime = firstFile.mimetype;
+        mediaName = firstFile.originalname;
+        mediaRows.push({ position: 0, data: mediaData, mime: mediaMime, name: mediaName });
       }
-      mediaName = req.file.originalname;
     }
 
     const parsedSelection = parseSelection(selection);
@@ -3847,13 +4140,6 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
           values
             ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
           returning *
-        ),
-        inserted_media as (
-          insert into node_media (node_id, data)
-          select inserted_node.id, $15::bytea
-          from inserted_node
-          where $15::bytea is not null
-          returning node_id
         )
         select *
         from inserted_node
@@ -3873,9 +4159,17 @@ app.post("/api/nodes", requireAuth, parseMultipartForm, async (req, res, next) =
         mediaName,
         clamp(Number(x), nodeDragBounds.minX, nodeDragBounds.maxX),
         clamp(Number(y), nodeDragBounds.minY, nodeDragBounds.maxY),
-        mediaData,
       ],
     );
+    for (const row of mediaRows) {
+      await pool.query(
+        `
+          insert into node_media (node_id, position, data, media_mime, media_name)
+          values ($1, $2, $3, $4, $5)
+        `,
+        [rows[0].id, row.position, row.data, row.mime, row.name],
+      );
+    }
     const assignments = await classifyNodeMegaClusters({
       title: safeTitle,
       body: safeBody,

@@ -1032,8 +1032,13 @@ const IMAGE_CLIPBOARD_EXTENSIONS = {
   "image/jpeg": ".jpg",
   "image/gif": ".gif",
 };
+const IMAGE_UPLOAD_MAX_WIDTH = 1280;
+const IMAGE_UPLOAD_MAX_HEIGHT = 720;
+const IMAGE_UPLOAD_QUALITY = 0.82;
+const COMPRESSED_IMAGE_MIME = "image/jpeg";
+const IMAGE_NODE_MAX_FILES = 10;
 let pastedComposerImage = { file: null, previewUrl: "" };
-let droppedComposerMedia = { file: null };
+let droppedComposerMedia = { file: null, files: [] };
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(value, max));
@@ -1063,6 +1068,81 @@ function isFileWithinUploadLimit(file, type = "") {
 
 function getUploadLimitMessage(type = "") {
   return t("upload.limit", { mb: getUploadLimitForType(type).mb });
+}
+
+function isCompressibleImageFile(file) {
+  if (!file) return false;
+  const extension = getMediaFileExtension(file);
+  return ["image/png", "image/jpeg"].includes(file.type) || [".png", ".jpg", ".jpeg"].includes(extension);
+}
+
+function getCompressedImageFileName(fileName) {
+  const baseName = String(fileName || "image").replace(/\.[^.]*$/, "").trim() || "image";
+  return `${baseName}.jpg`;
+}
+
+function loadImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    image.addEventListener(
+      "load",
+      () => {
+        URL.revokeObjectURL(objectUrl);
+        resolve(image);
+      },
+      { once: true },
+    );
+    image.addEventListener(
+      "error",
+      () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error("Image could not be loaded"));
+      },
+      { once: true },
+    );
+    image.src = objectUrl;
+  });
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve) => {
+    canvas.toBlob(resolve, type, quality);
+  });
+}
+
+async function prepareImageFileForUpload(file) {
+  if (!isCompressibleImageFile(file)) return file;
+
+  try {
+    const image = await loadImageFile(file);
+    const width = image.naturalWidth;
+    const height = image.naturalHeight;
+    if (!width || !height) return file;
+
+    const scale = Math.min(1, IMAGE_UPLOAD_MAX_WIDTH / width, IMAGE_UPLOAD_MAX_HEIGHT / height);
+    if (scale >= 1) return file;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) return file;
+
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    const blob = await canvasToBlob(canvas, COMPRESSED_IMAGE_MIME, IMAGE_UPLOAD_QUALITY);
+    if (!blob) return file;
+
+    return new File([blob], getCompressedImageFileName(file.name), {
+      type: COMPRESSED_IMAGE_MIME,
+      lastModified: Date.now(),
+    });
+  } catch (error) {
+    return file;
+  }
 }
 
 function isTextNodeType(type) {
@@ -1163,6 +1243,7 @@ function isMediaFileAcceptedForType(type, file) {
 
 function clearDroppedMedia(state, statusElement, clearButtonElement, dropZoneElement, type) {
   state.file = null;
+  state.files = [];
   if (statusElement) {
     statusElement.textContent = getMediaDropMessage(type);
   }
@@ -1176,6 +1257,7 @@ function clearDroppedMedia(state, statusElement, clearButtonElement, dropZoneEle
 
 function setDroppedMedia(state, file, statusElement, clearButtonElement, dropZoneElement, fileInputElement) {
   state.file = file;
+  state.files = file ? [file] : [];
   if (fileInputElement) {
     fileInputElement.value = "";
   }
@@ -1191,6 +1273,49 @@ function setDroppedMedia(state, file, statusElement, clearButtonElement, dropZon
   }
 }
 
+function setDroppedMediaFiles(state, files, statusElement, clearButtonElement, dropZoneElement, fileInputElement) {
+  state.files = files;
+  state.file = files[0] || null;
+  if (fileInputElement) {
+    fileInputElement.value = "";
+  }
+  if (statusElement) {
+    statusElement.textContent =
+      files.length > 1 ? `${files.length} files selected` : files[0] ? t("media.dropped", { name: files[0].name }) : getMediaDropMessage("image");
+  }
+  if (clearButtonElement) {
+    clearButtonElement.hidden = files.length === 0;
+  }
+  if (dropZoneElement) {
+    dropZoneElement.classList.toggle("has-file", files.length > 0);
+    dropZoneElement.classList.remove("is-invalid", "is-dragover");
+  }
+}
+
+function getUploadLimitExceededFile(files, type) {
+  return files.find((file) => !isFileWithinUploadLimit(file, type)) || null;
+}
+
+function getFilesTotalSize(files) {
+  return files.reduce((total, file) => total + Number(file?.size || 0), 0);
+}
+
+function areImageNodeFilesWithinTotalUploadLimit(files) {
+  return getFilesTotalSize(files) <= MAX_VIDEO_UPLOAD_BYTES;
+}
+
+function getImageNodeTotalUploadLimitMessage() {
+  return t("upload.limit", { mb: MAX_VIDEO_UPLOAD_MB });
+}
+
+function getSelectedFilesFromInput(fileInputElement) {
+  return Array.from(fileInputElement.files || []);
+}
+
+function getImageNodeFileCountMessage() {
+  return `Image nodes can include up to ${IMAGE_NODE_MAX_FILES} files.`;
+}
+
 function handleMediaFileDrop(
   event,
   type,
@@ -1203,25 +1328,40 @@ function handleMediaFileDrop(
 ) {
   event.preventDefault();
   dropZoneElement.classList.remove("is-dragover");
-  const file = event.dataTransfer?.files?.[0] || null;
+  const files = Array.from(event.dataTransfer?.files || []);
+  const acceptedFiles = type === "image" ? files.slice(0, IMAGE_NODE_MAX_FILES) : files.slice(0, 1);
+  const file = acceptedFiles[0] || null;
   if (!file) return false;
 
-  if (!isMediaFileAcceptedForType(type, file)) {
+  if (type === "image" && files.length > IMAGE_NODE_MAX_FILES) {
+    clearDroppedMedia(state, statusElement, clearButtonElement, dropZoneElement, type);
+    dropZoneElement.classList.add("is-invalid");
+    statusElement.textContent = getImageNodeFileCountMessage();
+    return false;
+  }
+
+  if (acceptedFiles.some((item) => !isMediaFileAcceptedForType(type, item))) {
     clearDroppedMedia(state, statusElement, clearButtonElement, dropZoneElement, type);
     dropZoneElement.classList.add("is-invalid");
     statusElement.textContent = t("media.unsupported");
     return false;
   }
 
-  if (!isFileWithinUploadLimit(file, type)) {
+  if (getUploadLimitExceededFile(acceptedFiles, type)) {
     clearDroppedMedia(state, statusElement, clearButtonElement, dropZoneElement, type);
     dropZoneElement.classList.add("is-invalid");
     statusElement.textContent = getUploadLimitMessage(type);
     return false;
   }
+  if (type === "image" && !areImageNodeFilesWithinTotalUploadLimit(acceptedFiles)) {
+    clearDroppedMedia(state, statusElement, clearButtonElement, dropZoneElement, type);
+    dropZoneElement.classList.add("is-invalid");
+    statusElement.textContent = getImageNodeTotalUploadLimitMessage();
+    return false;
+  }
 
-  setDroppedMedia(state, file, statusElement, clearButtonElement, dropZoneElement, fileInputElement);
-  onAccepted?.(file);
+  setDroppedMediaFiles(state, acceptedFiles, statusElement, clearButtonElement, dropZoneElement, fileInputElement);
+  onAccepted?.(file, acceptedFiles);
   return true;
 }
 
@@ -1273,29 +1413,58 @@ function updateMediaDropZone(type, dropZoneElement, state, statusElement, clearB
   if (!dropZoneElement) return;
   const isText = isTextNodeType(type);
   dropZoneElement.classList.toggle("is-hidden", isText);
-  if (isText || (state.file && !isMediaFileAcceptedForType(type, state.file))) {
+  const files = Array.isArray(state.files) && state.files.length > 0 ? state.files : state.file ? [state.file] : [];
+  if (isText || files.some((file) => !isMediaFileAcceptedForType(type, file))) {
     clearDroppedMedia(state, statusElement, clearButtonElement, dropZoneElement, type);
-  } else if (!state.file && statusElement) {
+  } else if (files.length === 0 && statusElement) {
     statusElement.textContent = getMediaDropMessage(type);
   }
 }
 
-function getMediaFileForType(type, fileInputElement, pastedImageState, droppedMediaState = null) {
-  if (isTextNodeType(type)) return null;
-  const selectedFile = fileInputElement.files ? fileInputElement.files[0] : null;
-  const file = selectedFile || droppedMediaState?.file || (type === "image" ? pastedImageState.file : null);
-  if (!isFileWithinUploadLimit(file, type)) {
+function getMediaFilesForType(type, fileInputElement, pastedImageState, droppedMediaState = null) {
+  if (isTextNodeType(type)) return [];
+  const selectedFiles = getSelectedFilesFromInput(fileInputElement);
+  const droppedFiles = Array.isArray(droppedMediaState?.files) && droppedMediaState.files.length > 0
+    ? droppedMediaState.files
+    : droppedMediaState?.file
+      ? [droppedMediaState.file]
+      : [];
+  const pastedFiles = type === "image" && pastedImageState.file ? [pastedImageState.file] : [];
+  const files = selectedFiles.length > 0 ? selectedFiles : droppedFiles.length > 0 ? droppedFiles : pastedFiles;
+  if (type === "image" && files.length > IMAGE_NODE_MAX_FILES) {
+    window.alert(getImageNodeFileCountMessage());
+    return null;
+  }
+  if (type !== "image" && files.length > 1) {
+    return files.slice(0, 1);
+  }
+  const oversizedFile = getUploadLimitExceededFile(files, type);
+  if (oversizedFile) {
     window.alert(getUploadLimitMessage(type));
     return null;
   }
-  return file;
+  if (type === "image" && !areImageNodeFilesWithinTotalUploadLimit(files)) {
+    window.alert(getImageNodeTotalUploadLimitMessage());
+    return null;
+  }
+  return files;
+}
+
+function getMediaFileForType(type, fileInputElement, pastedImageState, droppedMediaState = null) {
+  return getMediaFilesForType(type, fileInputElement, pastedImageState, droppedMediaState)?.[0] || null;
 }
 
 function hasOversizedMediaFile(type, fileInputElement, pastedImageState, droppedMediaState = null) {
   if (isTextNodeType(type)) return false;
-  const selectedFile = fileInputElement.files ? fileInputElement.files[0] : null;
-  const file = selectedFile || droppedMediaState?.file || (type === "image" ? pastedImageState.file : null);
-  return !!file && !isFileWithinUploadLimit(file, type);
+  const selectedFiles = getSelectedFilesFromInput(fileInputElement);
+  const droppedFiles = Array.isArray(droppedMediaState?.files) && droppedMediaState.files.length > 0
+    ? droppedMediaState.files
+    : droppedMediaState?.file
+      ? [droppedMediaState.file]
+      : [];
+  const pastedFiles = type === "image" && pastedImageState.file ? [pastedImageState.file] : [];
+  const files = selectedFiles.length > 0 ? selectedFiles : droppedFiles.length > 0 ? droppedFiles : pastedFiles;
+  return !!getUploadLimitExceededFile(files, type) || (type === "image" && !areImageNodeFilesWithinTotalUploadLimit(files));
 }
 
 function escapeHtml(value) {
@@ -1735,7 +1904,7 @@ async function signup() {
         setAuthMessageKey("upload.limit", { mb: getUploadLimitForType().mb });
         return;
       }
-      formData.append("profileIconFile", signupProfileIconInput.files[0]);
+      formData.append("profileIconFile", await prepareImageFileForUpload(signupProfileIconInput.files[0]));
     }
 
     await handleAuthResponse(
@@ -1818,7 +1987,7 @@ async function saveProfile() {
       setProfileMessageKey("upload.limit", { mb: getUploadLimitForType().mb });
       return;
     }
-    formData.append("profileIconFile", profileIconInput.files[0]);
+    formData.append("profileIconFile", await prepareImageFileForUpload(profileIconInput.files[0]));
   }
 
   try {
@@ -1854,15 +2023,31 @@ function normalizeNode(node) {
   const max = isTextNodeType(node.type) ? (node.body || "").length : Number(node.duration || 0);
   const selection = node.selection || { start: 0, end: max };
   const selectionStart = clamp(Number(selection.start || 0), 0, max);
+  const mediaItems = Array.isArray(node.mediaItems)
+    ? node.mediaItems
+        .map((item, index) => ({
+          url: item.url || item.mediaUrl || "",
+          mime: item.mime || item.mediaMime || null,
+          name: item.name || item.mediaName || null,
+          position: Number(item.position ?? index),
+        }))
+        .filter((item) => item.url)
+        .sort((a, b) => a.position - b.position)
+    : [];
+  const fallbackMediaItems =
+    mediaItems.length > 0 || !node.mediaUrl
+      ? mediaItems
+      : [{ url: node.mediaUrl, mime: node.mediaMime || null, name: node.mediaName || null, position: 0 }];
   return {
     ...node,
     ownerUserId: node.ownerUserId || null,
     clusterId: node.clusterId || getPublicClusterId(),
     body: node.body || "",
     duration: isTextNodeType(node.type) ? null : Number(node.duration || 0),
-    mediaUrl: node.mediaUrl || null,
-    mediaMime: node.mediaMime || null,
-    mediaName: node.mediaName || null,
+    mediaUrl: fallbackMediaItems[0]?.url || node.mediaUrl || null,
+    mediaMime: fallbackMediaItems[0]?.mime || node.mediaMime || null,
+    mediaName: fallbackMediaItems[0]?.name || node.mediaName || null,
+    mediaItems: fallbackMediaItems,
     shareEnabled: node.shareEnabled !== false,
     megaClusterIds: Array.isArray(node.megaClusterIds) ? node.megaClusterIds.map((id) => Number(id)) : [],
     likeCount: Number(node.likeCount || 0),
@@ -4732,9 +4917,30 @@ function getNewNodePosition(originNode = null) {
   return originNode ? findOpenNodeCreationPosition(fallback) : fallback;
 }
 
-async function createNodeFromValues({ type, title, body, duration, mediaFile, clusterId = getPublicClusterId(), originNode = null }) {
+async function createNodeFromValues({
+  type,
+  title,
+  body,
+  duration,
+  mediaFile = null,
+  mediaFiles = null,
+  clusterId = getPublicClusterId(),
+  originNode = null,
+}) {
   const hasDuration = type === "music" || type === "video";
   const safeDuration = hasDuration ? clamp(Number(duration || 180), 10, 900) : null;
+  const sourceMediaFiles = Array.isArray(mediaFiles) ? mediaFiles : mediaFile ? [mediaFile] : [];
+  const uploadMediaFiles =
+    type === "image"
+      ? await Promise.all(sourceMediaFiles.slice(0, IMAGE_NODE_MAX_FILES).map((file) => prepareImageFileForUpload(file)))
+      : sourceMediaFiles.slice(0, 1);
+  const uploadMediaFile = uploadMediaFiles[0] || null;
+  const mediaItems = uploadMediaFiles.map((file, index) => ({
+    url: URL.createObjectURL(file),
+    mime: file.type,
+    name: file.name,
+    position: index,
+  }));
   const position = getNewNodePosition(originNode);
   const safeTitle = title.trim() || `${getTypeLabel(type)} ${nodes.length + 1}`;
   const safeBody = String(body || "").replace(/\r\n/g, "\n");
@@ -4748,9 +4954,10 @@ async function createNodeFromValues({ type, title, body, duration, mediaFile, cl
     body: safeBody,
     duration: safeDuration,
     createdAt: new Date().toISOString(),
-    mediaUrl: !isTextNodeType(type) && mediaFile ? URL.createObjectURL(mediaFile) : null,
-    mediaMime: !isTextNodeType(type) && mediaFile ? mediaFile.type : null,
-    mediaName: !isTextNodeType(type) && mediaFile ? mediaFile.name : null,
+    mediaUrl: !isTextNodeType(type) && uploadMediaFile ? mediaItems[0]?.url || URL.createObjectURL(uploadMediaFile) : null,
+    mediaMime: !isTextNodeType(type) && uploadMediaFile ? uploadMediaFile.type : null,
+    mediaName: !isTextNodeType(type) && uploadMediaFile ? uploadMediaFile.name : null,
+    mediaItems: type === "image" ? mediaItems : [],
     likeCount: 0,
     likedByCurrentUser: false,
     favoritedByCurrentUser: false,
@@ -4763,7 +4970,7 @@ async function createNodeFromValues({ type, title, body, duration, mediaFile, cl
   try {
     let savedNode = newNode;
     if (apiAvailable) {
-      if (!isTextNodeType(type) && mediaFile) {
+      if (!isTextNodeType(type) && uploadMediaFile) {
         const formData = new FormData();
         formData.append("type", type);
         formData.append("title", safeTitle);
@@ -4776,7 +4983,9 @@ async function createNodeFromValues({ type, title, body, duration, mediaFile, cl
         if (originNode) {
           formData.append("originNodeId", originNode.id);
         }
-        formData.append("mediaFile", mediaFile);
+        uploadMediaFiles.forEach((file) => {
+          formData.append(type === "image" ? "mediaFiles" : "mediaFile", file);
+        });
         savedNode = normalizeNode(
           await apiRequest("/nodes", {
             method: "POST",
@@ -4809,15 +5018,16 @@ async function addNode() {
     window.alert(getUploadLimitMessage(typeInput.value));
     return;
   }
-  const mediaFile = getMediaFileForType(typeInput.value, mediaFileInput, pastedComposerImage, droppedComposerMedia);
-  setNodeSubmissionPending(true, mediaFile ? t("processing.uploadSave") : t("processing.saveNode"));
+  const mediaFiles = getMediaFilesForType(typeInput.value, mediaFileInput, pastedComposerImage, droppedComposerMedia);
+  if (mediaFiles === null) return;
+  setNodeSubmissionPending(true, mediaFiles.length > 0 ? t("processing.uploadSave") : t("processing.saveNode"));
   try {
     await createNodeFromValues({
       type: typeInput.value,
       title: titleInput.value,
       body: bodyInput.value,
       duration: durationInput.value,
-      mediaFile,
+      mediaFiles,
       clusterId: clusterInput.value,
     });
 
@@ -5017,6 +5227,7 @@ function updateTypeFields() {
         : type === "video"
           ? "video/mp4,.mp4"
           : "";
+  mediaFileInput.multiple = type === "image";
   if (isText) {
     mediaFileInput.value = "";
   }
@@ -5025,9 +5236,20 @@ function updateTypeFields() {
 }
 
 function updateDurationFromMediaFile() {
-  const file = mediaFileInput.files ? mediaFileInput.files[0] : null;
-  if (file && !isFileWithinUploadLimit(file, typeInput.value)) {
+  const files = getSelectedFilesFromInput(mediaFileInput);
+  const file = files[0] || null;
+  if (typeInput.value === "image" && files.length > IMAGE_NODE_MAX_FILES) {
+    window.alert(getImageNodeFileCountMessage());
+    mediaFileInput.value = "";
+    return;
+  }
+  if (getUploadLimitExceededFile(files, typeInput.value)) {
     window.alert(getUploadLimitMessage(typeInput.value));
+    mediaFileInput.value = "";
+    return;
+  }
+  if (typeInput.value === "image" && !areImageNodeFilesWithinTotalUploadLimit(files)) {
+    window.alert(getImageNodeTotalUploadLimitMessage());
     mediaFileInput.value = "";
     return;
   }
@@ -5240,11 +5462,30 @@ function renderMediaDetail(node) {
   }).join("");
 
   const source = node.mediaUrl ? escapeHtml(resolveMediaUrl(node.mediaUrl)) : "";
+  const imageItems =
+    node.type === "image"
+      ? (Array.isArray(node.mediaItems) && node.mediaItems.length > 0 ? node.mediaItems : node.mediaUrl ? [{ url: node.mediaUrl, name: node.mediaName }] : [])
+      : [];
   const stage =
     node.type === "image"
-      ? `<div class="media-stage image">${
-          source
-            ? `<img class="media-player image-player" src="${source}" alt="${escapeHtml(node.title)}" />`
+      ? `<div class="image-gallery">${
+          imageItems.length > 0
+            ? imageItems
+                .map(
+                  (item, index) => `
+                    <figure class="media-stage image">
+                      <img class="media-player image-player" src="${escapeHtml(resolveMediaUrl(item.url))}" alt="${escapeHtml(
+                        imageItems.length > 1 ? `${node.title} ${index + 1}` : node.title,
+                      )}" />
+                      ${
+                        imageItems.length > 1
+                          ? `<figcaption class="image-gallery-count">${index + 1} / ${imageItems.length}</figcaption>`
+                          : ""
+                      }
+                    </figure>
+                  `,
+                )
+                .join("")
             : `<div class="image-glyph"></div>`
         }</div>`
       : node.type === "music"
@@ -6315,10 +6556,16 @@ function bindRelayDialogContent(data) {
       return;
     }
     sendButton.disabled = true;
+    const uploadFile = file ? await prepareImageFileForUpload(file) : null;
+    if (uploadFile && !isFileWithinUploadLimit(uploadFile, "image")) {
+      window.alert(getUploadLimitMessage("image"));
+      sendButton.disabled = false;
+      return;
+    }
     const formData = new FormData();
     formData.append("body", body);
-    if (file) {
-      formData.append("imageFile", file);
+    if (uploadFile) {
+      formData.append("imageFile", uploadFile);
     }
     try {
       await apiRequest(`/nodes/${data.nodeId}/relay/messages`, {
@@ -6545,6 +6792,7 @@ function updateComposerMediaFields(type, mediaFieldElement, fileInputElement, du
         : type === "video"
           ? "video/mp4,.mp4"
           : "";
+  fileInputElement.multiple = type === "image";
   if (isText) {
     fileInputElement.value = "";
   }
@@ -6589,7 +6837,7 @@ function bindDetailComposer(originNode) {
   const toggleButton = composer.querySelector(".detailComposerToggle");
   const composerPanel = composer.querySelector(".detail-composer-grid");
   const pastedDetailImage = { file: null, previewUrl: "" };
-  const droppedDetailMedia = { file: null };
+  const droppedDetailMedia = { file: null, files: [] };
 
   toggleButton.addEventListener("click", () => togglePanel(toggleButton, composerPanel));
   clusterField.innerHTML = getClusterOptionsMarkup();
@@ -6604,16 +6852,27 @@ function bindDetailComposer(originNode) {
     updateDetailMediaFields();
   });
   fileField.addEventListener("change", () => {
-    if (fileField.files && fileField.files[0] && !isFileWithinUploadLimit(fileField.files[0], typeField.value)) {
+    const files = getSelectedFilesFromInput(fileField);
+    if (typeField.value === "image" && files.length > IMAGE_NODE_MAX_FILES) {
+      window.alert(getImageNodeFileCountMessage());
+      fileField.value = "";
+      return;
+    }
+    if (getUploadLimitExceededFile(files, typeField.value)) {
       window.alert(getUploadLimitMessage(typeField.value));
       fileField.value = "";
       return;
     }
-    if (fileField.files && fileField.files[0]) {
+    if (typeField.value === "image" && !areImageNodeFilesWithinTotalUploadLimit(files)) {
+      window.alert(getImageNodeTotalUploadLimitMessage());
+      fileField.value = "";
+      return;
+    }
+    if (files.length > 0) {
       clearDroppedMedia(droppedDetailMedia, dropStatus, dropClearButton, dropZone, typeField.value);
       clearPastedImage(pastedDetailImage, pastePreview, pasteStatus, pasteClearButton, pastePanel);
     }
-    updateDurationFromFile(typeField.value, fileField.files ? fileField.files[0] : null, durationFieldInput);
+    updateDurationFromFile(typeField.value, files[0] || null, durationFieldInput);
   });
   bindMediaDropZone({
     dropZoneElement: dropZone,
@@ -6643,15 +6902,16 @@ function bindDetailComposer(originNode) {
       window.alert(getUploadLimitMessage(typeField.value));
       return;
     }
-    const mediaFile = getMediaFileForType(typeField.value, fileField, pastedDetailImage, droppedDetailMedia);
-    setNodeSubmissionPending(true, mediaFile ? t("processing.uploadConnect") : t("processing.saveConnect"));
+    const mediaFiles = getMediaFilesForType(typeField.value, fileField, pastedDetailImage, droppedDetailMedia);
+    if (mediaFiles === null) return;
+    setNodeSubmissionPending(true, mediaFiles.length > 0 ? t("processing.uploadConnect") : t("processing.saveConnect"));
     try {
       const createdNode = await createNodeFromValues({
         type: typeField.value,
         title: titleField.value,
         body: bodyField.value,
         duration: durationFieldInput.value,
-        mediaFile,
+        mediaFiles,
         clusterId: clusterField.value,
         originNode,
       });

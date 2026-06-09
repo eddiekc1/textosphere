@@ -234,10 +234,32 @@ function renderOwner(owner) {
 
 function renderMedia(node) {
   const url = resolveMediaUrl(node.mediaUrl);
-  if (!url || node.isPrivate) return "";
+  if (node.isPrivate) return "";
   if (node.type === "image") {
-    return `<div class="share-media"><img src="${escapeHtml(url)}" alt="${escapeHtml(node.title)}" /></div>`;
+    const items = Array.isArray(node.mediaItems) && node.mediaItems.length > 0
+      ? node.mediaItems
+      : url
+        ? [{ url, name: node.mediaName }]
+        : [];
+    if (items.length === 0) return "";
+    return `
+      <div class="share-media-list">
+        ${items
+          .map(
+            (item, index) => `
+              <figure class="share-media">
+                <img src="${escapeHtml(resolveMediaUrl(item.url))}" alt="${escapeHtml(
+                  items.length > 1 ? `${node.title} ${index + 1}` : node.title,
+                )}" />
+                ${items.length > 1 ? `<figcaption>${index + 1} / ${items.length}</figcaption>` : ""}
+              </figure>
+            `,
+          )
+          .join("")}
+      </div>
+    `;
   }
+  if (!url) return "";
   if (node.type === "music") {
     return `<div class="share-media"><audio controls src="${escapeHtml(url)}"></audio></div>`;
   }
