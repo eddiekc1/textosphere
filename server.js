@@ -93,22 +93,7 @@ const linkPreviewCache = new Map();
 
 app.disable("x-powered-by");
 
-const securityPolicy = [
-  "default-src 'self'",
-  "base-uri 'self'",
-  "object-src 'none'",
-  "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: http: https:",
-  "media-src 'self' blob: http: https:",
-  "connect-src 'self'",
-  "frame-src https://www.youtube.com https://www.youtube-nocookie.com",
-  "frame-ancestors 'none'",
-  "form-action 'self'",
-].join("; ");
-
 function setSecurityHeaders(req, res, next) {
-  res.setHeader("Content-Security-Policy", securityPolicy);
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
