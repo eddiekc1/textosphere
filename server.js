@@ -4,6 +4,7 @@ const dns = require("node:dns").promises;
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
+const tls = require("node:tls");
 const express = require("express");
 const pg = require("pg");
 require("dotenv").config();
@@ -83,6 +84,12 @@ const corsAllowedOrigins = new Set(
 const imageUploadMaxWidth = 1280;
 const imageUploadMaxHeight = 720;
 const maxImageNodeUploadFiles = 10;
+const registrationVerificationTtlMinutes = Number(process.env.REGISTRATION_VERIFICATION_TTL_MINUTES || 15);
+const registrationVerificationTtlMs =
+  Number.isFinite(registrationVerificationTtlMinutes) && registrationVerificationTtlMinutes > 0
+    ? registrationVerificationTtlMinutes * 60 * 1000
+    : 15 * 60 * 1000;
+const registrationVerificationMaxAttempts = 5;
 const linkPreviewTimeoutMs = 4000;
 const linkPreviewMaxBytes = 1024 * 1024;
 const linkPreviewMaxRedirects = 3;
@@ -468,6 +475,169 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
 function verifyPassword(password, salt, expectedHash) {
   const { hash } = hashPassword(password, salt);
   return crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(expectedHash, "hex"));
+}
+
+function generateVerificationCode() {
+  return String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
+}
+
+function hashVerificationCode(email, code) {
+  return hashToken(`${String(email || "").trim().toLowerCase()}:${String(code || "").trim()}`);
+}
+
+function encodeMailHeader(value) {
+  const text = String(value || "");
+  return /^[\x20-\x7e]*$/.test(text) ? text : `=?UTF-8?B?${Buffer.from(text, "utf8").toString("base64")}?=`;
+}
+
+function getSafeMailAddress(value) {
+  const address = String(value || "").trim();
+  if (!address || /[\r\n<>]/.test(address)) return "";
+  return address;
+}
+
+function createSmtpMessage({ from, to, subject, text }) {
+  const safeFrom = getSafeMailAddress(from);
+  const safeTo = getSafeMailAddress(to);
+  const normalizedText = String(text || "").replace(/\r?\n/g, "\r\n").replace(/^\./gm, "..");
+  return [
+    `From: ${safeFrom}`,
+    `To: ${safeTo}`,
+    `Subject: ${encodeMailHeader(subject)}`,
+    "MIME-Version: 1.0",
+    "Content-Type: text/plain; charset=UTF-8",
+    "Content-Transfer-Encoding: 8bit",
+    `Message-ID: <${crypto.randomUUID()}@textosphere.local>`,
+    "",
+    normalizedText,
+  ].join("\r\n");
+}
+
+function readSmtpResponse(socket, state) {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      socket.off("data", onData);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error("SMTP connection closed"));
+    };
+    const onData = (chunk) => {
+      state.buffer += chunk.toString("utf8");
+      const lines = state.buffer.split(/\r?\n/);
+      state.buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (/^\d{3} /.test(line)) {
+          cleanup();
+          resolve(line);
+          return;
+        }
+      }
+    };
+    socket.on("data", onData);
+    socket.on("error", onError);
+    socket.on("close", onClose);
+  });
+}
+
+async function writeSmtpCommand(socket, state, command, expectedCodes) {
+  socket.write(`${command}\r\n`);
+  const response = await readSmtpResponse(socket, state);
+  const code = Number(response.slice(0, 3));
+  if (!expectedCodes.includes(code)) {
+    throw new Error(`SMTP command failed: ${response}`);
+  }
+  return response;
+}
+
+function connectSmtpSocket({ host, port, secure }) {
+  return new Promise((resolve, reject) => {
+    const socket = secure ? tls.connect({ host, port, servername: host }) : net.connect({ host, port });
+    const cleanup = () => {
+      socket.off("connect", onConnect);
+      socket.off("secureConnect", onConnect);
+      socket.off("error", onError);
+    };
+    const onConnect = () => {
+      cleanup();
+      resolve(socket);
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    socket.once(secure ? "secureConnect" : "connect", onConnect);
+    socket.once("error", onError);
+  });
+}
+
+async function sendSmtpMail({ to, subject, text }) {
+  const host = String(process.env.SMTP_HOST || "").trim();
+  if (!host) return false;
+
+  const secure = process.env.SMTP_SECURE === "true";
+  const port = Number(process.env.SMTP_PORT || (secure ? 465 : 587));
+  const from = getSafeMailAddress(process.env.SMTP_FROM || process.env.SMTP_USER || "");
+  const safeTo = getSafeMailAddress(to);
+  if (!from || !safeTo) throw new Error("SMTP_FROM and recipient email are required");
+
+  let socket = await connectSmtpSocket({ host, port, secure });
+  let state = { buffer: "" };
+  try {
+    await readSmtpResponse(socket, state);
+    await writeSmtpCommand(socket, state, `EHLO ${process.env.SMTP_HELO || "localhost"}`, [250]);
+
+    if (!secure && process.env.SMTP_STARTTLS !== "false") {
+      await writeSmtpCommand(socket, state, "STARTTLS", [220]);
+      socket = tls.connect({ socket, servername: host });
+      state = { buffer: "" };
+      await new Promise((resolve, reject) => {
+        socket.once("secureConnect", resolve);
+        socket.once("error", reject);
+      });
+      await writeSmtpCommand(socket, state, `EHLO ${process.env.SMTP_HELO || "localhost"}`, [250]);
+    }
+
+    if (process.env.SMTP_USER || process.env.SMTP_PASS) {
+      const auth = Buffer.from(`\u0000${process.env.SMTP_USER || ""}\u0000${process.env.SMTP_PASS || ""}`, "utf8").toString("base64");
+      await writeSmtpCommand(socket, state, `AUTH PLAIN ${auth}`, [235]);
+    }
+
+    await writeSmtpCommand(socket, state, `MAIL FROM:<${from}>`, [250]);
+    await writeSmtpCommand(socket, state, `RCPT TO:<${safeTo}>`, [250, 251]);
+    await writeSmtpCommand(socket, state, "DATA", [354]);
+    socket.write(`${createSmtpMessage({ from, to: safeTo, subject, text })}\r\n.\r\n`);
+    const dataResponse = await readSmtpResponse(socket, state);
+    if (Number(dataResponse.slice(0, 3)) !== 250) throw new Error(`SMTP DATA failed: ${dataResponse}`);
+    await writeSmtpCommand(socket, state, "QUIT", [221]);
+    return true;
+  } finally {
+    socket.end();
+  }
+}
+
+async function sendRegistrationVerificationEmail(email, code) {
+  const subject = "Textosphere verification code";
+  const text = [
+    "Textosphere account verification",
+    "",
+    `Your verification code is: ${code}`,
+    "",
+    `This code expires in ${Math.round(registrationVerificationTtlMs / 60000)} minutes.`,
+    "If you did not request this account, you can ignore this email.",
+  ].join("\n");
+
+  const sent = await sendSmtpMail({ to: email, subject, text });
+  if (!sent) {
+    console.info(`[Textosphere] Verification code for ${email}: ${code}`);
+  }
+  return sent;
 }
 
 function textLength(value) {
@@ -1828,6 +1998,35 @@ async function initDb() {
   await pool.query("alter table users add column if not exists display_name text not null default ''");
   await pool.query("update users set display_name = user_identifier where display_name = ''");
   await pool.query(`
+    create table if not exists pending_user_registrations (
+      id uuid primary key,
+      email text not null,
+      code_hash text not null,
+      password_hash text not null,
+      password_salt text not null,
+      user_identifier text not null check (user_identifier ~ '^[A-Za-z0-9_-]+$'),
+      display_name text not null default '',
+      birth_date date,
+      profile_icon text,
+      profile_icon_data bytea,
+      profile_icon_mime text not null default '',
+      profile_icon_name text not null default '',
+      bio text not null default '',
+      attempt_count integer not null default 0,
+      expires_at timestamptz not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `);
+  await pool.query(`
+    create unique index if not exists pending_user_registrations_email_unique
+    on pending_user_registrations (lower(email))
+  `);
+  await pool.query(`
+    create index if not exists pending_user_registrations_expires_at_index
+    on pending_user_registrations (expires_at)
+  `);
+  await pool.query(`
     create table if not exists user_profile_icons (
       user_id uuid primary key references users(id) on delete cascade,
       data bytea not null,
@@ -2676,6 +2875,29 @@ app.post("/api/auth/register", parseMultipartForm, async (req, res, next) => {
       res.status(400).json({ error: "Invalid password" });
       return;
     }
+
+    await pool.query("delete from pending_user_registrations where expires_at < now()");
+    const existingUser = await pool.query("select id from users where email = $1 or user_identifier = $2 limit 1", [email, userId]);
+    if (existingUser.rows.length > 0) {
+      res.status(409).json({ error: "Email or user ID already exists" });
+      return;
+    }
+    const pendingUserId = await pool.query(
+      `
+        select id
+        from pending_user_registrations
+        where user_identifier = $1
+          and lower(email) <> lower($2)
+          and expires_at >= now()
+        limit 1
+      `,
+      [userId, email],
+    );
+    if (pendingUserId.rows.length > 0) {
+      res.status(409).json({ error: "Email or user ID already exists" });
+      return;
+    }
+
     const newUserUuid = crypto.randomUUID();
     let profileUpload = null;
     if (req.file) {
@@ -2684,7 +2906,109 @@ app.post("/api/auth/register", parseMultipartForm, async (req, res, next) => {
     }
 
     const { salt, hash } = hashPassword(password);
-    const { rows } = await pool.query(
+    const code = generateVerificationCode();
+    await pool.query(
+      `
+        delete from pending_user_registrations
+        where lower(email) = lower($1)
+      `,
+      [email],
+    );
+    await pool.query(
+      `
+        insert into pending_user_registrations
+          (id, email, code_hash, password_hash, password_salt, user_identifier, display_name, birth_date,
+           profile_icon, profile_icon_data, profile_icon_mime, profile_icon_name, bio, expires_at)
+        values
+          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::bytea, $11, $12, $13, now() + ($14::text || ' milliseconds')::interval)
+      `,
+      [
+        newUserUuid,
+        email,
+        hashVerificationCode(email, code),
+        hash,
+        salt,
+        userId,
+        userName || userId,
+        birthDate || null,
+        profileIcon,
+        profileUpload?.data || null,
+        profileUpload?.mime || "",
+        profileUpload?.name || "",
+        bio,
+        registrationVerificationTtlMs,
+      ],
+    );
+    try {
+      await sendRegistrationVerificationEmail(email, code);
+    } catch (error) {
+      console.error("Failed to send registration verification email", error);
+      res.status(502).json({ error: "Unable to send verification email" });
+      return;
+    }
+    res.status(202).json({
+      verificationRequired: true,
+      email,
+      expiresInMinutes: Math.round(registrationVerificationTtlMs / 60000),
+    });
+  } catch (error) {
+    if (error.statusCode) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    if (error.code === "23505") {
+      res.status(409).json({ error: "Email or user ID already exists" });
+      return;
+    }
+    next(error);
+  }
+});
+
+app.post("/api/auth/verify-registration", async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const code = String(req.body.code || "").trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !/^\d{6}$/.test(code)) {
+      res.status(400).json({ error: "Invalid verification code" });
+      return;
+    }
+
+    await client.query("begin");
+    await client.query("delete from pending_user_registrations where expires_at < now()");
+    const { rows } = await client.query(
+      `
+        select *
+        from pending_user_registrations
+        where lower(email) = lower($1)
+        for update
+      `,
+      [email],
+    );
+    if (rows.length === 0) {
+      await client.query("rollback");
+      res.status(400).json({ error: "Invalid or expired verification code" });
+      return;
+    }
+
+    const pending = rows[0];
+    if (Number(pending.attempt_count) >= registrationVerificationMaxAttempts) {
+      await client.query("delete from pending_user_registrations where id = $1", [pending.id]);
+      await client.query("commit");
+      res.status(400).json({ error: "Verification attempts exceeded" });
+      return;
+    }
+
+    if (pending.code_hash !== hashVerificationCode(email, code)) {
+      await client.query("update pending_user_registrations set attempt_count = attempt_count + 1, updated_at = now() where id = $1", [
+        pending.id,
+      ]);
+      await client.query("commit");
+      res.status(400).json({ error: "Invalid verification code" });
+      return;
+    }
+
+    const insertedUser = await client.query(
       `
         with inserted_user as (
           insert into users
@@ -2704,34 +3028,35 @@ app.post("/api/auth/register", parseMultipartForm, async (req, res, next) => {
         from inserted_user
       `,
       [
-        newUserUuid,
-        email,
-        hash,
-        salt,
-        userId,
-        userName || userId,
-        birthDate || null,
-        profileIcon,
-        bio,
-        profileUpload?.data || null,
-        profileUpload?.mime || "",
-        profileUpload?.name || "",
+        pending.id,
+        pending.email,
+        pending.password_hash,
+        pending.password_salt,
+        pending.user_identifier,
+        pending.display_name || pending.user_identifier,
+        pending.birth_date || null,
+        pending.profile_icon,
+        pending.bio,
+        pending.profile_icon_data || null,
+        pending.profile_icon_mime || "",
+        pending.profile_icon_name || "",
       ],
     );
-    await ensureUserPublicCluster(rows[0].id);
+    await ensureUserPublicCluster(pending.id, client);
+    await client.query("delete from pending_user_registrations where id = $1", [pending.id]);
     const token = crypto.randomBytes(32).toString("hex");
-    await pool.query("insert into sessions (token_hash, user_id) values ($1, $2)", [hashToken(token), rows[0].id]);
-    res.status(201).json({ token, user: toUser(rows[0]) });
+    await client.query("insert into sessions (token_hash, user_id) values ($1, $2)", [hashToken(token), pending.id]);
+    await client.query("commit");
+    res.status(201).json({ token, user: toUser(insertedUser.rows[0]) });
   } catch (error) {
-    if (error.statusCode) {
-      res.status(error.statusCode).json({ error: error.message });
-      return;
-    }
+    await client.query("rollback").catch(() => {});
     if (error.code === "23505") {
       res.status(409).json({ error: "Email or user ID already exists" });
       return;
     }
     next(error);
+  } finally {
+    client.release();
   }
 });
 

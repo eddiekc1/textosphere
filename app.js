@@ -17,6 +17,8 @@ const signupPasswordInput = document.querySelector("#signupPasswordInput");
 const signupBirthDateInput = document.querySelector("#signupBirthDateInput");
 const signupProfileIconInput = document.querySelector("#signupProfileIconInput");
 const signupBioInput = document.querySelector("#signupBioInput");
+const signupVerificationField = document.querySelector("#signupVerificationField");
+const signupVerificationCodeInput = document.querySelector("#signupVerificationCodeInput");
 const signupButton = document.querySelector("#signupButton");
 const currentUserIcon = document.querySelector("#currentUserIcon");
 const currentUserId = document.querySelector("#currentUserId");
@@ -414,6 +416,12 @@ const i18n = {
     "auth.bioLabel": "Bio",
     "auth.bioPlaceholder": "Bio",
     "auth.signupButton": "Create account",
+    "auth.sendVerificationButton": "Send verification code",
+    "auth.verifySignupButton": "Verify and create account",
+    "auth.verificationCodeLabel": "Verification code",
+    "auth.verificationCodePlaceholder": "6-digit code",
+    "auth.verificationSent": "We sent a verification code to {email}. Enter it to create your account.",
+    "auth.errorVerification": "Unable to verify the code. Check the latest email and try again.",
     "auth.errorLogin": "Unable to log in. Check your email address, password, and login permission.",
     "auth.errorSignup": "Unable to create the account. Check your User ID, email address, and password requirements.",
     "profile.type": "User",
@@ -689,6 +697,12 @@ const i18n = {
     "auth.bioLabel": "自己紹介文",
     "auth.bioPlaceholder": "自己紹介文",
     "auth.signupButton": "ユーザーを作成",
+    "auth.sendVerificationButton": "認証番号を送信",
+    "auth.verifySignupButton": "確認して作成",
+    "auth.verificationCodeLabel": "認証番号",
+    "auth.verificationCodePlaceholder": "6桁の番号",
+    "auth.verificationSent": "{email} に認証番号を送信しました。番号を入力するとユーザーを作成します。",
+    "auth.errorVerification": "認証番号を確認できませんでした。最新のメールを確認してもう一度お試しください。",
     "auth.errorLogin": "ログインできませんでした。メールアドレス、パスワード、ログイン許可を確認してください。",
     "auth.errorSignup": "ユーザーを作成できませんでした。ユーザーID、メール、パスワード条件を確認してください。",
     "profile.type": "ユーザー",
@@ -968,6 +982,8 @@ let nodePositionAnimationFrame = null;
 let authToken = localStorage.getItem("textosphereToken") || "";
 let currentLocale = getInitialLocale();
 let currentUser = null;
+let pendingSignupEmail = "";
+let signupVerificationRequested = false;
 let clusters = [
   {
     id: PUBLIC_CLUSTER_ID,
@@ -1750,6 +1766,26 @@ function setAuthMessageKey(key, variables = {}) {
   setLocalizedMessage(authMessage, key, variables);
 }
 
+function setSignupVerificationMode(enabled, email = "") {
+  signupVerificationRequested = Boolean(enabled);
+  pendingSignupEmail = enabled ? email : "";
+  if (signupVerificationField) {
+    signupVerificationField.hidden = !enabled;
+  }
+  if (signupVerificationCodeInput && !enabled) {
+    signupVerificationCodeInput.value = "";
+  }
+  const buttonKey = enabled ? "auth.verifySignupButton" : "auth.sendVerificationButton";
+  signupButton.dataset.i18n = buttonKey;
+  signupButton.textContent = t(buttonKey);
+}
+
+function resetSignupVerification() {
+  if (!signupVerificationRequested) return;
+  setSignupVerificationMode(false);
+  setAuthMessage("");
+}
+
 function setProfileMessage(message) {
   profileMessage.textContent = message || "";
   delete profileMessage.dataset.i18nMessageKey;
@@ -1763,6 +1799,7 @@ function setProfileMessageKey(key, variables = {}) {
 function clearInitialAuthFields() {
   loginPasswordInput.value = "";
   signupUserIdInput.value = "";
+  setSignupVerificationMode(false);
 }
 
 function setAuthenticatedView(user) {
@@ -1892,6 +1929,20 @@ async function login() {
 
 async function signup() {
   try {
+    if (signupVerificationRequested) {
+      await handleAuthResponse(
+        await apiRequest("/auth/verify-registration", {
+          method: "POST",
+          body: JSON.stringify({
+            email: pendingSignupEmail || signupEmailInput.value,
+            code: signupVerificationCodeInput.value,
+          }),
+        }),
+      );
+      setSignupVerificationMode(false);
+      return;
+    }
+
     const formData = new FormData();
     formData.append("email", signupEmailInput.value);
     formData.append("userName", signupUserNameInput.value);
@@ -1907,14 +1958,19 @@ async function signup() {
       formData.append("profileIconFile", await prepareImageFileForUpload(signupProfileIconInput.files[0]));
     }
 
-    await handleAuthResponse(
-      await apiRequest("/auth/register", {
-        method: "POST",
-        body: formData,
-      }),
-    );
+    const response = await apiRequest("/auth/register", {
+      method: "POST",
+      body: formData,
+    });
+    if (response?.verificationRequired) {
+      setSignupVerificationMode(true, response.email || signupEmailInput.value);
+      setAuthMessageKey("auth.verificationSent", { email: response.email || signupEmailInput.value });
+      signupVerificationCodeInput?.focus();
+      return;
+    }
+    await handleAuthResponse(response);
   } catch (error) {
-    setAuthMessageKey("auth.errorSignup");
+    setAuthMessageKey(signupVerificationRequested ? "auth.errorVerification" : "auth.errorSignup");
   }
 }
 
@@ -7328,6 +7384,26 @@ loginPasswordInput.addEventListener("keydown", (event) => {
   login();
 });
 signupButton.addEventListener("click", signup);
+[
+  signupEmailInput,
+  signupUserNameInput,
+  signupUserIdInput,
+  signupPasswordInput,
+  signupBirthDateInput,
+  signupProfileIconInput,
+  signupBioInput,
+].forEach((input) => {
+  input?.addEventListener("input", resetSignupVerification);
+  input?.addEventListener("change", resetSignupVerification);
+});
+signupVerificationCodeInput?.addEventListener("input", () => {
+  signupVerificationCodeInput.value = signupVerificationCodeInput.value.replace(/\D/g, "").slice(0, 6);
+});
+signupVerificationCodeInput?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  signup();
+});
 userSummaryButton.addEventListener("click", () => {
   if (currentUser) {
     openUserDetail(currentUser.id);
