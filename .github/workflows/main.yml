@@ -18,7 +18,7 @@ jobs:
       - name: Deploy with rsync
         uses: Burnett01/rsync-deployments@v8
         with:
-          switches: -avz --exclude=".git" --exclude=".github" --exclude=".gitignore" --exclude=".env" --exclude="node_modules" --exclude="uploads"
+          switches: -avz --exclude=".git" --exclude=".github" --exclude=".gitignore" --exclude=".env" --exclude="node_modules" --exclude="uploads" --exclude="card"
           path: /
           remote_path: /home/textosphere/www/
           remote_host: ${{ secrets.SSH_HOST }}
@@ -32,4 +32,4 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           user: ${{ secrets.SSH_USER }}
           private_key: ${{ secrets.SSH_PRIVATE_KEY }}
-          command: sudo systemctl restart textosphere
+          command: pm2 restart textosphere
