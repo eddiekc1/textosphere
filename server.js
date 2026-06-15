@@ -97,6 +97,12 @@ const linkPreviewCacheTtlMs = 6 * 60 * 60 * 1000;
 const linkPreviewNegativeCacheTtlMs = 10 * 60 * 1000;
 const linkPreviewCacheMaxEntries = 300;
 const linkPreviewCache = new Map();
+const shareCardTypeLabels = {
+  text: "Text",
+  image: "Image",
+  music: "Music",
+  video: "Video",
+};
 
 app.disable("x-powered-by");
 
@@ -893,6 +899,20 @@ function getSafeUploadedImageMime(file) {
         : "image/png";
 }
 
+function escapeHtmlAttribute(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function truncateForMeta(value, maxLength = 180) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}...` : text;
+}
+
 function isServerCompressibleImage(file) {
   return ["image/png", "image/jpeg"].includes(getSafeUploadedImageMime(file));
 }
@@ -1268,6 +1288,28 @@ async function compressVideoToLow480p(inputPath, outputPath) {
   const stat = fs.statSync(outputPath);
   if (stat.size <= 0) {
     throw createHttpError(500, "Video compression produced an empty file");
+  }
+}
+
+async function extractVideoThumbnail(inputPath, outputPath) {
+  await runMediaTool(ffmpegPath, [
+    "-y",
+    "-ss",
+    "0.2",
+    "-i",
+    inputPath,
+    "-frames:v",
+    "1",
+    "-vf",
+    "scale='min(1200,iw)':-2",
+    "-q:v",
+    "3",
+    outputPath,
+  ], 60 * 1000, "Video thumbnail extraction");
+
+  const stat = fs.statSync(outputPath);
+  if (stat.size <= 0) {
+    throw createHttpError(500, "Video thumbnail extraction produced an empty file");
   }
 }
 
@@ -1655,6 +1697,100 @@ async function getSharePayload(token) {
   });
 
   return payload;
+}
+
+function getRequestOrigin(req) {
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+  const protocol = forwardedProto || req.protocol || "http";
+  const host = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
+  return host ? `${protocol}://${host}` : "";
+}
+
+function toAbsoluteUrl(req, url) {
+  const value = String(url || "").trim();
+  if (!value) return "";
+  try {
+    return new URL(value, getRequestOrigin(req) || "http://localhost").href;
+  } catch (error) {
+    return "";
+  }
+}
+
+function getShareCardImageUrls(req, payload, token) {
+  const node = payload?.node || {};
+  const urls = [];
+  const addUrl = (url) => {
+    const absoluteUrl = toAbsoluteUrl(req, url);
+    if (absoluteUrl && !urls.includes(absoluteUrl)) urls.push(absoluteUrl);
+  };
+
+  if (!node.isPrivate) {
+    if (node.type === "image") {
+      const firstImage = Array.isArray(node.mediaItems) && node.mediaItems.length > 0 ? node.mediaItems[0]?.url : node.mediaUrl;
+      addUrl(firstImage);
+    } else if (node.type === "video" && node.mediaUrl) {
+      addUrl(`/api/shares/${encodeURIComponent(token)}/video-thumbnail.jpg`);
+    }
+    addUrl(node.ownerUser?.profileIcon);
+  }
+
+  return urls;
+}
+
+function renderShareHtml(req, token, payload) {
+  const node = payload.node || {};
+  const title = node.title || "Shared node";
+  const typeLabel = shareCardTypeLabels[node.type] || "投稿";
+  const ownerName = node.ownerUser?.userName || node.ownerUser?.userId || "unknown";
+  const description = truncateForMeta(`${typeLabel} / ${ownerName}${node.body ? ` / ${node.body}` : ""}`, 200);
+  const shareUrl = toAbsoluteUrl(req, `/share/${encodeURIComponent(token)}`);
+  const imageUrls = getShareCardImageUrls(req, payload, token);
+  const imageMeta = imageUrls
+    .map(
+      (imageUrl, index) => `
+    <meta property="og:image" content="${escapeHtmlAttribute(imageUrl)}" />
+    <meta property="og:image:alt" content="${escapeHtmlAttribute(
+      index === 0 ? `${typeLabel}: ${title}` : `${ownerName} profile image`,
+    )}" />
+    <meta name="twitter:image${index === 0 ? "" : index}" content="${escapeHtmlAttribute(imageUrl)}" />`,
+    )
+    .join("");
+
+  return `<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${escapeHtmlAttribute(title)} - Textosphere</title>
+    <meta name="description" content="${escapeHtmlAttribute(description)}" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Textosphere" />
+    <meta property="og:title" content="${escapeHtmlAttribute(title)}" />
+    <meta property="og:description" content="${escapeHtmlAttribute(description)}" />
+    <meta property="og:url" content="${escapeHtmlAttribute(shareUrl)}" />${imageMeta}
+    <meta name="twitter:card" content="${imageUrls.length ? "summary_large_image" : "summary"}" />
+    <meta name="twitter:title" content="${escapeHtmlAttribute(title)}" />
+    <meta name="twitter:description" content="${escapeHtmlAttribute(description)}" />
+    <link rel="canonical" href="${escapeHtmlAttribute(shareUrl)}" />
+    <link rel="stylesheet" href="/share.css?v=20260615-card" />
+  </head>
+  <body>
+    <main class="share-page">
+      <header class="share-header">
+        <a class="share-brand" href="/" aria-label="Textosphere">
+          <span class="share-brand-mark" aria-hidden="true"></span>
+          <span>
+            <strong>Textosphere</strong>
+            <small>Where texts connect beyond time.</small>
+          </span>
+        </a>
+      </header>
+      <section class="share-status" id="shareStatus">共有された光点を読み込んでいます</section>
+      <section class="share-view" id="shareView" hidden></section>
+    </main>
+    <script src="/share.js?v=20260615-card"></script>
+  </body>
+</html>`;
 }
 
 async function createShareToken() {
@@ -2664,8 +2800,18 @@ app.use((req, res, next) => {
 app.use("/uploads", express.static(uploadDir));
 app.use(express.static(__dirname));
 
-app.get("/share/:token", (req, res) => {
-  res.sendFile(path.join(__dirname, "share.html"));
+app.get("/share/:token", async (req, res, next) => {
+  try {
+    const payload = await getSharePayload(req.params.token);
+    if (!payload) {
+      res.sendFile(path.join(__dirname, "share.html"));
+      return;
+    }
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(renderShareHtml(req, req.params.token, payload));
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get("/api/health", async (req, res, next) => {
@@ -2700,6 +2846,66 @@ app.get("/api/shares/:token", async (req, res, next) => {
     res.json(payload);
   } catch (error) {
     next(error);
+  }
+});
+
+app.get("/api/shares/:token/video-thumbnail.jpg", async (req, res, next) => {
+  const tempId = crypto.randomUUID();
+  const tempInputPath = path.join(uploadDir, `${tempId}-share-video.mp4`);
+  const tempOutputPath = path.join(uploadDir, `${tempId}-share-video.jpg`);
+  try {
+    const token = String(req.params.token || "");
+    if (!/^[A-Za-z0-9_-]+$/.test(token)) {
+      res.sendStatus(404);
+      return;
+    }
+    const cachePath = path.join(uploadDir, `share-video-thumbnail-${token}.jpg`);
+    if (fs.existsSync(cachePath)) {
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      res.sendFile(cachePath);
+      return;
+    }
+
+    const { rows } = await pool.query(
+      `
+        select node_media.data as media_data,
+               coalesce(nullif(node_media.media_mime, ''), nodes.media_mime) as media_mime
+        from node_shares
+        join nodes on nodes.id = node_shares.node_id
+        join node_media on node_media.node_id = nodes.id
+        where node_shares.token = $1
+          and node_shares.disabled_at is null
+          and nodes.share_enabled = true
+          and nodes.type = 'video'
+          and node_media.position = 0
+        limit 1
+      `,
+      [token],
+    );
+    const video = rows[0];
+    if (!video || String(video.media_mime || "").toLowerCase() !== "video/mp4") {
+      res.sendStatus(404);
+      return;
+    }
+
+    const mediaBuffer = Buffer.isBuffer(video.media_data) ? video.media_data : Buffer.from(video.media_data);
+    if (mediaBuffer.length === 0) {
+      res.sendStatus(404);
+      return;
+    }
+
+    fs.writeFileSync(tempInputPath, mediaBuffer);
+    await extractVideoThumbnail(tempInputPath, tempOutputPath);
+    fs.renameSync(tempOutputPath, cachePath);
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.sendFile(cachePath);
+  } catch (error) {
+    if (!res.headersSent) {
+      next(error);
+    }
+  } finally {
+    fs.unlink(tempInputPath, () => {});
+    fs.unlink(tempOutputPath, () => {});
   }
 });
 
