@@ -11,6 +11,7 @@ require("dotenv").config();
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
+const publicBaseUrl = String(process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "");
 const uploadDir = path.join(__dirname, "uploads");
 const publicClusterId = "00000000-0000-4000-8000-000000000001";
 const systemUserId = "00000000-0000-4000-8000-000000000002";
@@ -104,6 +105,7 @@ const shareCardTypeLabels = {
   video: "Video",
 };
 
+app.set("trust proxy", true);
 app.disable("x-powered-by");
 
 function setSecurityHeaders(req, res, next) {
@@ -1700,6 +1702,7 @@ async function getSharePayload(token) {
 }
 
 function getRequestOrigin(req) {
+  if (publicBaseUrl) return publicBaseUrl;
   const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
   const protocol = forwardedProto || req.protocol || "http";
   const host = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
@@ -1718,23 +1721,23 @@ function toAbsoluteUrl(req, url) {
 
 function getShareCardImageUrls(req, payload, token) {
   const node = payload?.node || {};
-  const urls = [];
-  const addUrl = (url) => {
+  const images = [];
+  const addUrl = (url, type = "") => {
     const absoluteUrl = toAbsoluteUrl(req, url);
-    if (absoluteUrl && !urls.includes(absoluteUrl)) urls.push(absoluteUrl);
+    if (absoluteUrl && !images.some((image) => image.url === absoluteUrl)) images.push({ url: absoluteUrl, type });
   };
 
   if (!node.isPrivate) {
     if (node.type === "image") {
-      const firstImage = Array.isArray(node.mediaItems) && node.mediaItems.length > 0 ? node.mediaItems[0]?.url : node.mediaUrl;
-      addUrl(firstImage);
+      const firstImage = Array.isArray(node.mediaItems) && node.mediaItems.length > 0 ? node.mediaItems[0] : null;
+      addUrl(firstImage?.url || node.mediaUrl, firstImage?.mime || node.mediaMime || "");
     } else if (node.type === "video" && node.mediaUrl) {
-      addUrl(`/api/shares/${encodeURIComponent(token)}/video-thumbnail.jpg`);
+      addUrl(`/api/shares/${encodeURIComponent(token)}/video-thumbnail.jpg`, "image/jpeg");
     }
     addUrl(node.ownerUser?.profileIcon);
   }
 
-  return urls;
+  return images;
 }
 
 function renderShareHtml(req, token, payload) {
@@ -1744,15 +1747,17 @@ function renderShareHtml(req, token, payload) {
   const ownerName = node.ownerUser?.userName || node.ownerUser?.userId || "unknown";
   const description = truncateForMeta(`${typeLabel} / ${ownerName}${node.body ? ` / ${node.body}` : ""}`, 200);
   const shareUrl = toAbsoluteUrl(req, `/share/${encodeURIComponent(token)}`);
-  const imageUrls = getShareCardImageUrls(req, payload, token);
-  const imageMeta = imageUrls
+  const images = getShareCardImageUrls(req, payload, token);
+  const imageMeta = images
     .map(
-      (imageUrl, index) => `
-    <meta property="og:image" content="${escapeHtmlAttribute(imageUrl)}" />
+      (image, index) => `
+    <meta property="og:image" content="${escapeHtmlAttribute(image.url)}" />
+    <meta property="og:image:secure_url" content="${escapeHtmlAttribute(image.url)}" />
+    ${image.type ? `<meta property="og:image:type" content="${escapeHtmlAttribute(image.type)}" />` : ""}
     <meta property="og:image:alt" content="${escapeHtmlAttribute(
       index === 0 ? `${typeLabel}: ${title}` : `${ownerName} profile image`,
     )}" />
-    <meta name="twitter:image${index === 0 ? "" : index}" content="${escapeHtmlAttribute(imageUrl)}" />`,
+    <meta name="twitter:image${index === 0 ? "" : index}" content="${escapeHtmlAttribute(image.url)}" />`,
     )
     .join("");
 
@@ -1768,7 +1773,7 @@ function renderShareHtml(req, token, payload) {
     <meta property="og:title" content="${escapeHtmlAttribute(title)}" />
     <meta property="og:description" content="${escapeHtmlAttribute(description)}" />
     <meta property="og:url" content="${escapeHtmlAttribute(shareUrl)}" />${imageMeta}
-    <meta name="twitter:card" content="${imageUrls.length ? "summary_large_image" : "summary"}" />
+    <meta name="twitter:card" content="${images.length ? "summary_large_image" : "summary"}" />
     <meta name="twitter:title" content="${escapeHtmlAttribute(title)}" />
     <meta name="twitter:description" content="${escapeHtmlAttribute(description)}" />
     <link rel="canonical" href="${escapeHtmlAttribute(shareUrl)}" />
