@@ -6,10 +6,18 @@ const appShell = document.querySelector("#appShell");
 const leftSidebar = document.querySelector("#leftSidebar");
 const sidebarToggleButton = document.querySelector("#sidebarToggleButton");
 const authShell = document.querySelector("#authShell");
+const authGrid = document.querySelector(".auth-grid");
+const loginPanel = document.querySelector("#loginPanel");
+const signupPanel = document.querySelector("#signupPanel");
+const passwordResetPanel = document.querySelector("#passwordResetPanel");
 const authMessage = document.querySelector("#authMessage");
 const loginEmailInput = document.querySelector("#loginEmailInput");
 const loginPasswordInput = document.querySelector("#loginPasswordInput");
 const loginButton = document.querySelector("#loginButton");
+const forgotPasswordButton = document.querySelector("#forgotPasswordButton");
+const resetEmailInput = document.querySelector("#resetEmailInput");
+const resetPasswordButton = document.querySelector("#resetPasswordButton");
+const backToLoginButton = document.querySelector("#backToLoginButton");
 const signupEmailInput = document.querySelector("#signupEmailInput");
 const signupUserNameInput = document.querySelector("#signupUserNameInput");
 const signupUserIdInput = document.querySelector("#signupUserIdInput");
@@ -400,6 +408,7 @@ const i18n = {
     "auth.loginIdLabel": "Email address / User ID",
     "auth.passwordLabel": "Password",
     "auth.loginButton": "Log in",
+    "auth.forgotPassword": "Forgot your password?",
     "auth.signupTitle": "Create account",
     "auth.emailLabel": "Email address",
     "auth.userNameLabel": "Display name",
@@ -422,6 +431,13 @@ const i18n = {
     "auth.verificationCodePlaceholder": "6-digit code",
     "auth.verificationSent": "We sent a verification code to {email}. Enter it to create your account.",
     "auth.errorVerification": "Unable to verify the code. Check the latest email and try again.",
+    "auth.resetTitle": "Password reset",
+    "auth.resetInstruction":
+      'To reset your password, enter your registered email address and press the "Password reset" button.',
+    "auth.resetButton": "Password reset",
+    "auth.backToLogin": "Back to log in",
+    "auth.resetSent": "If that email address is registered, a reset password has been sent.",
+    "auth.errorReset": "Unable to reset the password. Check the email address and try again.",
     "auth.errorLogin": "Unable to log in. Check your email address, password, and login permission.",
     "auth.errorSignup": "Unable to create the account. Check your User ID, email address, and password requirements.",
     "profile.type": "User",
@@ -682,6 +698,7 @@ const i18n = {
     "auth.loginIdLabel": "メールアドレス / ユーザーID",
     "auth.passwordLabel": "パスワード",
     "auth.loginButton": "ログイン",
+    "auth.forgotPassword": "パスワードを忘れた場合",
     "auth.signupTitle": "ユーザー作成",
     "auth.emailLabel": "メールアドレス",
     "auth.userNameLabel": "ユーザー名",
@@ -703,6 +720,13 @@ const i18n = {
     "auth.verificationCodePlaceholder": "6桁の番号",
     "auth.verificationSent": "{email} に認証番号を送信しました。番号を入力するとユーザーを作成します。",
     "auth.errorVerification": "認証番号を確認できませんでした。最新のメールを確認してもう一度お試しください。",
+    "auth.resetTitle": "パスワードリセット",
+    "auth.resetInstruction":
+      "パスワードをリセットする場合、登録されているメールアドレスを入力し、\"パスワードリセット\"ボタンを押してください",
+    "auth.resetButton": "パスワードリセット",
+    "auth.backToLogin": "ログインに戻る",
+    "auth.resetSent": "登録されているメールアドレスの場合、リセット後のパスワードを送信しました。",
+    "auth.errorReset": "パスワードをリセットできませんでした。メールアドレスを確認してもう一度お試しください。",
     "auth.errorLogin": "ログインできませんでした。メールアドレス、パスワード、ログイン許可を確認してください。",
     "auth.errorSignup": "ユーザーを作成できませんでした。ユーザーID、メール、パスワード条件を確認してください。",
     "profile.type": "ユーザー",
@@ -1786,6 +1810,24 @@ function resetSignupVerification() {
   setAuthMessage("");
 }
 
+function showPasswordResetView() {
+  authGrid?.classList.add("is-reset");
+  if (loginPanel) loginPanel.hidden = true;
+  if (signupPanel) signupPanel.hidden = true;
+  if (passwordResetPanel) passwordResetPanel.hidden = false;
+  resetEmailInput.value = loginEmailInput.value.includes("@") ? loginEmailInput.value : "";
+  setAuthMessage("");
+  resetEmailInput?.focus();
+}
+
+function showLoginSignupView() {
+  authGrid?.classList.remove("is-reset");
+  if (loginPanel) loginPanel.hidden = false;
+  if (signupPanel) signupPanel.hidden = false;
+  if (passwordResetPanel) passwordResetPanel.hidden = true;
+  setAuthMessage("");
+}
+
 function setProfileMessage(message) {
   profileMessage.textContent = message || "";
   delete profileMessage.dataset.i18nMessageKey;
@@ -1800,6 +1842,7 @@ function clearInitialAuthFields() {
   loginPasswordInput.value = "";
   signupUserIdInput.value = "";
   setSignupVerificationMode(false);
+  showLoginSignupView();
 }
 
 function setAuthenticatedView(user) {
@@ -1971,6 +2014,20 @@ async function signup() {
     await handleAuthResponse(response);
   } catch (error) {
     setAuthMessageKey(signupVerificationRequested ? "auth.errorVerification" : "auth.errorSignup");
+  }
+}
+
+async function resetPassword() {
+  try {
+    await apiRequest("/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({
+        email: resetEmailInput.value,
+      }),
+    });
+    setAuthMessageKey("auth.resetSent");
+  } catch (error) {
+    setAuthMessageKey("auth.errorReset");
   }
 }
 
@@ -7382,6 +7439,14 @@ loginPasswordInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" || event.isComposing) return;
   event.preventDefault();
   login();
+});
+forgotPasswordButton?.addEventListener("click", showPasswordResetView);
+backToLoginButton?.addEventListener("click", showLoginSignupView);
+resetPasswordButton?.addEventListener("click", resetPassword);
+resetEmailInput?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.isComposing) return;
+  event.preventDefault();
+  resetPassword();
 });
 signupButton.addEventListener("click", signup);
 [

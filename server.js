@@ -481,6 +481,18 @@ function generateVerificationCode() {
   return String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
 }
 
+function generateTemporaryPassword() {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-!#$%()[]@+*?/";
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    let password = "Aa1!";
+    for (let index = 0; index < 12; index += 1) {
+      password += chars[crypto.randomInt(0, chars.length)];
+    }
+    if (validatePassword(password)) return password;
+  }
+  return `Aa1!${crypto.randomBytes(6).toString("base64url")}`;
+}
+
 function hashVerificationCode(email, code) {
   return hashToken(`${String(email || "").trim().toLowerCase()}:${String(code || "").trim()}`);
 }
@@ -636,6 +648,25 @@ async function sendRegistrationVerificationEmail(email, code) {
   const sent = await sendSmtpMail({ to: email, subject, text });
   if (!sent) {
     console.info(`[Textosphere] Verification code for ${email}: ${code}`);
+  }
+  return sent;
+}
+
+async function sendPasswordResetEmail(email, temporaryPassword) {
+  const subject = "Textosphere password reset";
+  const text = [
+    "Textosphere password reset",
+    "",
+    "Your password has been reset.",
+    `Temporary password: ${temporaryPassword}`,
+    "",
+    "Log in with this password, then change it from your profile.",
+    "If you did not request a password reset, contact the Textosphere administrator.",
+  ].join("\n");
+
+  const sent = await sendSmtpMail({ to: email, subject, text });
+  if (!sent) {
+    console.info(`[Textosphere] Temporary password for ${email}: ${temporaryPassword}`);
   }
   return sent;
 }
@@ -3054,6 +3085,57 @@ app.post("/api/auth/verify-registration", async (req, res, next) => {
       res.status(409).json({ error: "Email or user ID already exists" });
       return;
     }
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.post("/api/auth/reset-password", async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const email = String(req.body.email || "").trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      res.status(400).json({ error: "Invalid email" });
+      return;
+    }
+
+    await client.query("begin");
+    const { rows } = await client.query(
+      `
+        select id, email
+        from users
+        where email = $1
+          and login_allowed = true
+        for update
+      `,
+      [email],
+    );
+
+    if (rows.length === 0) {
+      await client.query("commit");
+      res.json({ ok: true });
+      return;
+    }
+
+    const temporaryPassword = generateTemporaryPassword();
+    const { salt, hash } = hashPassword(temporaryPassword);
+    await client.query(
+      `
+        update users
+        set password_hash = $1,
+            password_salt = $2,
+            updated_at = now()
+        where id = $3
+      `,
+      [hash, salt, rows[0].id],
+    );
+    await sendPasswordResetEmail(rows[0].email, temporaryPassword);
+    await client.query("commit");
+    res.json({ ok: true });
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    console.error("Failed to reset password", error);
     next(error);
   } finally {
     client.release();

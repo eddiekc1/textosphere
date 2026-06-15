@@ -24,13 +24,14 @@
           <button class="locale-button" type="button" data-locale-choice="ja" aria-pressed="false" data-i18n="locale.japanese">Japanese</button>
         </div>
         <div class="auth-grid">
-          <section class="auth-panel">
+          <section class="auth-panel" id="loginPanel">
             <h2 data-i18n="auth.loginTitle">Log in</h2>
             <label class="field"><span data-i18n="auth.loginIdLabel">Email address / User ID</span><input id="loginEmailInput" type="text" autocomplete="username" /></label>
             <label class="field"><span data-i18n="auth.passwordLabel">Password</span><input id="loginPasswordInput" type="password" autocomplete="off" value="" maxlength="25" /></label>
             <button class="primary-button" id="loginButton" type="button" data-i18n="auth.loginButton">Log in</button>
+            <button class="text-link-button" id="forgotPasswordButton" type="button" data-i18n="auth.forgotPassword">Forgot your password?</button>
           </section>
-          <section class="auth-panel">
+          <section class="auth-panel" id="signupPanel">
             <h2 data-i18n="auth.signupTitle">Create account</h2>
             <label class="field"><span data-i18n="auth.emailLabel">Email address</span><input id="signupEmailInput" type="email" autocomplete="email" /></label>
             <label class="field"><span data-i18n="auth.userNameLabel">Display name</span><input id="signupUserNameInput" type="text" placeholder="Display name" maxlength="25" data-i18n-placeholder="auth.userNamePlaceholder" /></label>
@@ -40,7 +41,14 @@
             <label class="field"><span data-i18n="auth.profileIconLabel">Profile icon</span><input id="signupProfileIconInput" type="file" accept="image/png,image/jpeg,image/gif,.png,.jpg,.jpeg,.gif" /></label>
             <label class="field"><span data-i18n="auth.bioLabel">Bio</span><textarea id="signupBioInput" rows="4" placeholder="Bio" maxlength="4000" data-i18n-placeholder="auth.bioPlaceholder"></textarea></label>
             <label class="field signup-verification-field" id="signupVerificationField" hidden><span data-i18n="auth.verificationCodeLabel">Verification code</span><input id="signupVerificationCodeInput" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" data-i18n-placeholder="auth.verificationCodePlaceholder" /></label>
-            <button class="secondary-button" id="signupButton" type="button" data-i18n="auth.sendVerificationButton" disabled>Send verification code</button>
+            <button class="secondary-button" id="signupButton" type="button" data-i18n="auth.sendVerificationButton">Send verification code</button>
+          </section>
+          <section class="auth-panel auth-reset-panel" id="passwordResetPanel" hidden>
+            <h2 data-i18n="auth.resetTitle">Password reset</h2>
+            <p class="auth-reset-copy" data-i18n="auth.resetInstruction">To reset your password, enter your registered email address and press the password reset button.</p>
+            <label class="field"><span data-i18n="auth.emailLabel">Email address</span><input id="resetEmailInput" type="email" autocomplete="email" /></label>
+            <button class="primary-button" id="resetPasswordButton" type="button" data-i18n="auth.resetButton">Password reset</button>
+            <button class="text-link-button" id="backToLoginButton" type="button" data-i18n="auth.backToLogin">Back to log in</button>
           </section>
         </div>
         <p class="auth-message" id="authMessage"></p>
