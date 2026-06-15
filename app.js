@@ -153,8 +153,8 @@ const INPUT_LIMITS = {
 const DEFAULT_LINK_COMMENT = "link";
 const MAX_UPLOAD_BYTES = 30 * 1024 * 1024;
 const MAX_UPLOAD_MB = 30;
-const MAX_VIDEO_UPLOAD_BYTES = 80 * 1024 * 1024;
-const MAX_VIDEO_UPLOAD_MB = 80;
+const MAX_VIDEO_UPLOAD_BYTES = 50 * 1024 * 1024;
+const MAX_VIDEO_UPLOAD_MB = 50;
 const LOCALE_STORAGE_KEY = "textosphereLocale";
 const SUPPORTED_LOCALES = ["en", "ja"];
 
