@@ -44,6 +44,23 @@ const parsedMegaClusterClassifierTimeoutMs = Number(process.env.MEGA_CLUSTER_CLA
 const megaClusterClassifierTimeoutMs = Number.isFinite(parsedMegaClusterClassifierTimeoutMs)
   ? Math.max(100, parsedMegaClusterClassifierTimeoutMs)
   : 3000;
+const parsedMegaClusterBackfillBatchSize = Number(process.env.MEGA_CLUSTER_BACKFILL_BATCH_SIZE || 10);
+const megaClusterBackfillBatchSize = Number.isFinite(parsedMegaClusterBackfillBatchSize)
+  ? Math.min(100, Math.max(1, Math.floor(parsedMegaClusterBackfillBatchSize)))
+  : 10;
+const parsedMegaClusterBackfillIntervalMs = Number(process.env.MEGA_CLUSTER_BACKFILL_INTERVAL_MS || 300_000);
+const megaClusterBackfillIntervalMs = Number.isFinite(parsedMegaClusterBackfillIntervalMs)
+  ? Math.max(30_000, parsedMegaClusterBackfillIntervalMs)
+  : 300_000;
+const parsedMegaClusterBackfillStartupDelayMs = Number(process.env.MEGA_CLUSTER_BACKFILL_STARTUP_DELAY_MS || 15_000);
+const megaClusterBackfillStartupDelayMs = Number.isFinite(parsedMegaClusterBackfillStartupDelayMs)
+  ? Math.max(1_000, parsedMegaClusterBackfillStartupDelayMs)
+  : 15_000;
+const parsedMegaClusterBackfillGraceSeconds = Number(process.env.MEGA_CLUSTER_BACKFILL_GRACE_SECONDS || 60);
+const megaClusterBackfillGraceSeconds = Number.isFinite(parsedMegaClusterBackfillGraceSeconds)
+  ? Math.max(0, Math.floor(parsedMegaClusterBackfillGraceSeconds))
+  : 60;
+const megaClusterBackfillEnabled = process.env.MEGA_CLUSTER_BACKFILL_ENABLED !== "false";
 const megaClusterClassifierMaxText = {
   title: 300,
   body: 4000,
@@ -51,6 +68,8 @@ const megaClusterClassifierMaxText = {
 };
 let megaGravityTimer = null;
 let megaGravityRunning = false;
+let megaClusterBackfillTimer = null;
+let megaClusterBackfillRunning = false;
 let lastMegaDriftAt = 0;
 const { Pool } = pg;
 pg.types.setTypeParser(1082, (value) => value);
@@ -447,6 +466,11 @@ function coordToPx(coord) {
 
 function stableNumber(value) {
   return Array.from(String(value || "")).reduce((total, char) => total + char.charCodeAt(0), 0);
+}
+
+function stableMegaClusterIndex(value) {
+  const hash = crypto.createHash("sha256").update(String(value || "")).digest();
+  return hash.readUInt32BE(0) % megaClusterDefinitions.length;
 }
 
 function getSeedMegaCenter(id) {
@@ -1865,6 +1889,17 @@ function classifyNodeMegaClustersByKeywords({ title, body, clusterDescription, s
     .map(([id, score]) => ({ id, score }));
 }
 
+function getFallbackMegaClusterAssignment({ title, body, clusterDescription, sourceMegaClusterIds = [] }) {
+  const inheritedId = sourceMegaClusterIds.find((id) => Number.isInteger(Number(id)));
+  if (inheritedId !== undefined) {
+    return { id: Number(inheritedId), score: 0.25 };
+  }
+
+  const index = stableMegaClusterIndex(`${title || ""}\n${body || ""}\n${clusterDescription || ""}`);
+  const definition = megaClusterDefinitions[index] || megaClusterDefinitions[0];
+  return { id: definition.id, score: 0.05 };
+}
+
 function hasUsableOpenAiApiKey() {
   const apiKey = String(process.env.OPENAI_API_KEY || "").trim();
   if (!apiKey) return false;
@@ -2017,12 +2052,22 @@ async function classifyNodeMegaClusters({ title, body, clusterDescription, origi
     console.error("Mega cluster LLM classification failed; falling back to keyword classifier", error.message);
   }
 
-  return classifyNodeMegaClustersByKeywords({
+  const keywordAssignments = classifyNodeMegaClustersByKeywords({
     title,
     body,
     clusterDescription,
     sourceMegaClusterIds: contextSourceMegaClusterIds,
   });
+  if (keywordAssignments.length > 0) return keywordAssignments;
+
+  return [
+    getFallbackMegaClusterAssignment({
+      title,
+      body,
+      clusterDescription,
+      sourceMegaClusterIds: contextSourceMegaClusterIds,
+    }),
+  ];
 }
 
 async function reclassifyNodeMegaClusters(db, nodeId, { originNodeIds = [], includeIncomingSources = false } = {}) {
@@ -2066,6 +2111,67 @@ async function replaceNodeMegaClusters(client, nodeId, assignments) {
       `,
       [nodeId, assignment.id, assignment.score],
     );
+  }
+}
+
+async function getNodesMissingMegaClusters({ limit = megaClusterBackfillBatchSize, graceSeconds = megaClusterBackfillGraceSeconds } = {}) {
+  const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || megaClusterBackfillBatchSize)));
+  const safeGraceSeconds = Math.max(0, Math.floor(Number(graceSeconds) || 0));
+  const { rows } = await pool.query(
+    `
+      select nodes.id
+      from nodes
+      where nodes.created_at < now() - ($2::int * interval '1 second')
+        and not exists (
+          select 1
+          from node_mega_clusters
+          where node_mega_clusters.node_id = nodes.id
+        )
+      order by nodes.created_at asc
+      limit $1
+    `,
+    [safeLimit, safeGraceSeconds],
+  );
+  return rows.map((row) => row.id);
+}
+
+async function backfillMissingMegaClusters(options = {}) {
+  if (megaClusterBackfillRunning) {
+    return { running: true, processed: 0, assigned: 0, failed: 0, hasMore: null };
+  }
+
+  megaClusterBackfillRunning = true;
+  let processed = 0;
+  let assigned = 0;
+  let failed = 0;
+  try {
+    const nodeIds = await getNodesMissingMegaClusters(options);
+    for (const nodeId of nodeIds) {
+      try {
+        const assignments = await reclassifyNodeMegaClusters(pool, nodeId, { includeIncomingSources: true });
+        processed += 1;
+        assigned += assignments.length;
+      } catch (error) {
+        failed += 1;
+        console.error(`Mega cluster backfill failed for node ${nodeId}`, error);
+      }
+    }
+
+    if (processed > 0) {
+      await refreshMegaClusterMetrics();
+      console.log(`Mega cluster backfill processed ${processed} node(s), assigned ${assigned}, failed ${failed}`);
+    }
+
+    const remainingIds = await getNodesMissingMegaClusters({ ...options, limit: 1 });
+    return {
+      running: false,
+      processed,
+      assigned,
+      failed,
+      hasMore: remainingIds.length > 0,
+    };
+  } finally {
+    megaClusterBackfillRunning = false;
   }
 }
 
@@ -5083,6 +5189,23 @@ app.get("/api/nodes/positions", requireAuth, async (req, res, next) => {
   }
 });
 
+app.post("/api/mega-clusters/backfill", requireAuth, async (req, res, next) => {
+  try {
+    if (Number(req.user.role) !== 1) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
+    const result = await backfillMissingMegaClusters({
+      limit: req.body?.limit,
+      graceSeconds: req.body?.graceSeconds,
+    });
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
 async function refreshMegaClusterMetrics(client = pool) {
   const { rows } = await client.query(`
     select mega_clusters.id,
@@ -5347,6 +5470,17 @@ function startMegaClusterGravity() {
   setTimeout(applyMegaClusterGravity, 5_000);
 }
 
+function startMegaClusterBackfill() {
+  if (!megaClusterBackfillEnabled || megaClusterBackfillTimer) return;
+  const runBackfill = () => {
+    backfillMissingMegaClusters().catch((error) => {
+      console.error("Mega cluster backfill failed", error);
+    });
+  };
+  megaClusterBackfillTimer = setInterval(runBackfill, megaClusterBackfillIntervalMs);
+  setTimeout(runBackfill, megaClusterBackfillStartupDelayMs);
+}
+
 app.use((error, req, res, next) => {
   if (error.type === "entity.too.large") {
     res.status(413).json({ error: "Request body is too large" });
@@ -5369,6 +5503,7 @@ app.use((error, req, res, next) => {
 initDb()
   .then(() => {
     startMegaClusterGravity();
+    startMegaClusterBackfill();
     app.listen(port, () => {
       console.log(`Textosphere API listening on http://localhost:${port}`);
     });
